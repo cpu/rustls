@@ -1078,7 +1078,7 @@ struct ExpectFinished<C> {
     send_tickets: usize,
 }
 
-impl<C> ExpectFinished<C> {
+impl<C: CryptoProvider> ExpectFinished<C> {
     fn emit_ticket(
         transcript: &HandshakeHash,
         suite: &'static Tls13CipherSuite,
@@ -1086,9 +1086,9 @@ impl<C> ExpectFinished<C> {
         key_schedule: &KeyScheduleTraffic,
         config: &ServerConfig<C>,
     ) -> Result<(), Error> {
-        let nonce = rand::random_vec(32)?;
+        let nonce = rand::random_vec::<C>(32)?;
         let now = ticketer::TimeBase::now()?;
-        let age_add = rand::random_u32()?;
+        let age_add = rand::random_u32::<C>()?;
         let plain =
             get_server_session_value(transcript, suite, key_schedule, cx, &nonce, now, age_add)
                 .get_encoding();
@@ -1101,7 +1101,7 @@ impl<C> ExpectFinished<C> {
             };
             (ticket, config.ticketer.lifetime())
         } else {
-            let id = rand::random_vec(32)?;
+            let id = rand::random_vec::<C>(32)?;
             let stored = config
                 .session_storage
                 .put(id.clone(), plain);
