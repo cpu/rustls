@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use mio::net::{TcpListener, TcpStream};
+use rustls::crypto::Ring;
 
 #[macro_use]
 extern crate log;
@@ -44,13 +45,13 @@ struct TlsServer {
     server: TcpListener,
     connections: HashMap<mio::Token, OpenConnection>,
     next_id: usize,
-    tls_config: Arc<rustls::ServerConfig>,
+    tls_config: Arc<rustls::ServerConfig<Ring>>,
     mode: ServerMode,
 }
 
 impl TlsServer {
-    fn new(server: TcpListener, mode: ServerMode, cfg: Arc<rustls::ServerConfig>) -> Self {
-        Self {
+    fn new(server: TcpListener, mode: ServerMode, cfg: Arc<rustls::ServerConfig<Ring>>) -> Self {
+        TlsServer {
             server,
             connections: HashMap::new(),
             next_id: 2,
@@ -551,7 +552,7 @@ fn load_ocsp(filename: &Option<String>) -> Vec<u8> {
     ret
 }
 
-fn make_config(args: &Args) -> Arc<rustls::ServerConfig> {
+fn make_config(args: &Args) -> Arc<rustls::ServerConfig<Ring>> {
     let client_auth = if args.flag_auth.is_some() {
         let roots = load_certs(args.flag_auth.as_ref().unwrap());
         let mut client_auth_roots = RootCertStore::empty();
