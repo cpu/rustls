@@ -1,4 +1,9 @@
+use std::sync::Arc;
+
 use crate::check::inappropriate_handshake_message;
+use crate::client::common::ServerCertDetails;
+use crate::client::common::{ClientAuthDetails, ClientHelloDetails};
+use crate::client::{hs, ClientConfig, ClientSessionStore, ServerName};
 #[cfg(feature = "quic")]
 use crate::conn::Protocol;
 #[cfg(feature = "secret_extraction")]
@@ -39,11 +44,6 @@ use crate::{sign, KeyLog};
 
 use super::client_conn::ClientConnectionData;
 use super::hs::ClientContext;
-use crate::client::common::ServerCertDetails;
-use crate::client::common::{ClientAuthDetails, ClientHelloDetails};
-use crate::client::{hs, ClientConfig, ClientSessionStore, ServerName};
-
-use std::sync::Arc;
 
 // Extensions we expect in plaintext in the ServerHello.
 static ALLOWED_PLAINTEXT_EXTS: &[ExtensionType] = &[
@@ -188,19 +188,23 @@ pub(super) fn initial_key_share(
     config: &ClientConfig<impl CryptoProvider>,
     server_name: &ServerName,
 ) -> Result<kx::KeyExchange, Error> {
-    let group = match config
+    let group = config
         .session_storage
         .kx_hint(server_name)
-    {
-        Some(group) => group,
-        None => {
+        .filter(|hint_group| {
+            config
+                .kx_groups
+                .iter()
+                .find(|supported_group| supported_group.name == *hint_group)
+                .is_some()
+        })
+        .unwrap_or(
             config
                 .kx_groups
                 .first()
                 .expect("No kx groups configured")
-                .name
-        }
-    };
+                .name,
+        );
 
     kx::KeyExchange::choose(group, &config.kx_groups).map_err(|_| Error::FailedToGetRandomBytes)
 }
