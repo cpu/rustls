@@ -196,7 +196,7 @@ fn config_builder_for_client_rejects_empty_kx_groups() {
     assert_debug_eq(
         ClientConfig::<Ring>::builder()
             .with_safe_default_cipher_suites()
-            .with_kx_groups(&[])
+            .with_kx_groups::<Ring>(&[])
             .with_safe_default_protocol_versions()
             .err(),
         Some(Error::General("no kx groups configured".into())),
@@ -208,7 +208,7 @@ fn config_builder_for_client_rejects_empty_cipher_suites() {
     assert_debug_eq(
         ClientConfig::<Ring>::builder()
             .with_cipher_suites(&[])
-            .with_safe_default_kx_groups()
+            .with_safe_default_kx_groups::<Ring>()
             .with_safe_default_protocol_versions()
             .err(),
         Some(Error::General("no usable cipher suites configured".into())),
@@ -221,7 +221,7 @@ fn config_builder_for_client_rejects_incompatible_cipher_suites() {
     assert_debug_eq(
         ClientConfig::<Ring>::builder()
             .with_cipher_suites(&[rustls::cipher_suite::TLS13_AES_256_GCM_SHA384])
-            .with_safe_default_kx_groups()
+            .with_safe_default_kx_groups::<Ring>()
             .with_protocol_versions(&[&rustls::version::TLS12])
             .err(),
         Some(Error::General("no usable cipher suites configured".into())),
@@ -233,7 +233,7 @@ fn config_builder_for_server_rejects_empty_kx_groups() {
     assert_debug_eq(
         ServerConfig::<Ring>::builder()
             .with_safe_default_cipher_suites()
-            .with_kx_groups(&[])
+            .with_kx_groups::<Ring>(&[])
             .with_safe_default_protocol_versions()
             .err(),
         Some(Error::General("no kx groups configured".into())),
@@ -245,7 +245,7 @@ fn config_builder_for_server_rejects_empty_cipher_suites() {
     assert_debug_eq(
         ServerConfig::<Ring>::builder()
             .with_cipher_suites(&[])
-            .with_safe_default_kx_groups()
+            .with_safe_default_kx_groups::<Ring>()
             .with_safe_default_protocol_versions()
             .err(),
         Some(Error::General("no usable cipher suites configured".into())),
@@ -258,7 +258,7 @@ fn config_builder_for_server_rejects_incompatible_cipher_suites() {
     assert_debug_eq(
         ServerConfig::<Ring>::builder()
             .with_cipher_suites(&[rustls::cipher_suite::TLS13_AES_256_GCM_SHA384])
-            .with_safe_default_kx_groups()
+            .with_safe_default_kx_groups::<Ring>()
             .with_protocol_versions(&[&rustls::version::TLS12])
             .err(),
         Some(Error::General("no usable cipher suites configured".into())),
@@ -425,7 +425,7 @@ fn test_config_builders_debug() {
     );
     let b = b.with_cipher_suites(&[rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256]);
     assert_eq!("ConfigBuilder<ServerConfig<Ring>, _> { state: WantsKxGroups { cipher_suites: [TLS13_CHACHA20_POLY1305_SHA256] } }", format!("{:?}", b));
-    let b = b.with_kx_groups(&[&rustls::kx_group::X25519]);
+    let b = b.with_kx_groups(&[&rustls::crypto::ring::X25519]);
     assert_eq!("ConfigBuilder<ServerConfig<Ring>, _> { state: WantsVersions { cipher_suites: [TLS13_CHACHA20_POLY1305_SHA256], kx_groups: [X25519] } }", format!("{:?}", b));
     let b = b
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -440,7 +440,7 @@ fn test_config_builders_debug() {
     );
     let b = b.with_cipher_suites(&[rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256]);
     assert_eq!("ConfigBuilder<ClientConfig<Ring>, _> { state: WantsKxGroups { cipher_suites: [TLS13_CHACHA20_POLY1305_SHA256] } }", format!("{:?}", b));
-    let b = b.with_kx_groups(&[&rustls::kx_group::X25519]);
+    let b = b.with_kx_groups::<Ring>(&[&rustls::crypto::ring::X25519]);
     assert_eq!("ConfigBuilder<ClientConfig<Ring>, _> { state: WantsVersions { cipher_suites: [TLS13_CHACHA20_POLY1305_SHA256], kx_groups: [X25519] } }", format!("{:?}", b));
     let b = b
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -3725,9 +3725,9 @@ fn test_client_does_not_offer_sha1() {
 #[test]
 fn test_client_config_keyshare() {
     let client_config =
-        make_client_config_with_kx_groups(KeyType::Rsa, &[&rustls::kx_group::SECP384R1]);
+        make_client_config_with_kx_groups(KeyType::Rsa, &[&rustls::crypto::ring::SECP384R1]);
     let server_config =
-        make_server_config_with_kx_groups(KeyType::Rsa, &[&rustls::kx_group::SECP384R1]);
+        make_server_config_with_kx_groups(KeyType::Rsa, &[&rustls::crypto::ring::SECP384R1]);
     let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
     do_handshake_until_error(&mut client, &mut server).unwrap();
 }
@@ -3735,9 +3735,9 @@ fn test_client_config_keyshare() {
 #[test]
 fn test_client_config_keyshare_mismatch() {
     let client_config =
-        make_client_config_with_kx_groups(KeyType::Rsa, &[&rustls::kx_group::SECP384R1]);
+        make_client_config_with_kx_groups(KeyType::Rsa, &[&rustls::crypto::ring::SECP384R1]);
     let server_config =
-        make_server_config_with_kx_groups(KeyType::Rsa, &[&rustls::kx_group::X25519]);
+        make_server_config_with_kx_groups(KeyType::Rsa, &[&rustls::crypto::ring::X25519]);
     let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
     assert!(do_handshake_until_error(&mut client, &mut server).is_err());
 }
@@ -3748,7 +3748,10 @@ fn test_client_sends_helloretryrequest() {
     // client sends a secp384r1 key share
     let mut client_config = make_client_config_with_kx_groups(
         KeyType::Rsa,
-        &[&rustls::kx_group::SECP384R1, &rustls::kx_group::X25519],
+        &[
+            &rustls::crypto::ring::SECP384R1,
+            &rustls::crypto::ring::X25519,
+        ],
     );
 
     let storage = Arc::new(ClientStorage::new());
@@ -3756,7 +3759,7 @@ fn test_client_sends_helloretryrequest() {
 
     // but server only accepts x25519, so a HRR is required
     let server_config =
-        make_server_config_with_kx_groups(KeyType::Rsa, &[&rustls::kx_group::X25519]);
+        make_server_config_with_kx_groups(KeyType::Rsa, &[&rustls::crypto::ring::X25519]);
 
     let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
 
@@ -3849,13 +3852,13 @@ fn test_client_attempts_to_use_unsupported_kx_group() {
     // first, client sends a x25519 and server agrees. x25519 is inserted
     //   into kx group cache.
     let mut client_config_1 =
-        make_client_config_with_kx_groups(KeyType::Rsa, &[&rustls::kx_group::X25519]);
+        make_client_config_with_kx_groups(KeyType::Rsa, &[&rustls::crypto::ring::X25519]);
     client_config_1.session_storage = shared_storage.clone();
 
     // second, client only supports secp-384 and so kx group cache
     //   contains an unusable value.
     let mut client_config_2 =
-        make_client_config_with_kx_groups(KeyType::Rsa, &[&rustls::kx_group::SECP384R1]);
+        make_client_config_with_kx_groups(KeyType::Rsa, &[&rustls::crypto::ring::SECP384R1]);
     client_config_2.session_storage = shared_storage.clone();
 
     let server_config = make_server_config(KeyType::Rsa);

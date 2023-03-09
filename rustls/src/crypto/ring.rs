@@ -1,15 +1,28 @@
+use std::fmt::{Debug, Formatter};
+
 use ring::aead;
+use ring::agreement::{agree_ephemeral, EphemeralPrivateKey, UnparsedPublicKey};
 use ring::constant_time;
 use ring::rand::{SecureRandom, SystemRandom};
 
-use crate::crypto::CryptoProvider;
+use crate::crypto::{CryptoProvider, KeyExchange, KeyExchangeError, SupportedGroup};
 use crate::rand::GetRandomFailed;
 use crate::server::ProducesTickets;
+use crate::{Error, NamedGroup, PeerMisbehaved};
 
 /// Default crypto provider.
 pub struct Ring;
 
+// TODO(XXX): Why do I need to implement this? rustls/tests/api.rs:429 errs otherwise...
+impl Debug for Ring {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("*ring*")
+    }
+}
+
 impl CryptoProvider for Ring {
+    type KeyExchange = RingKeyExchange;
+
     fn ticket_generator() -> Result<Box<dyn ProducesTickets>, GetRandomFailed> {
         let mut key = [0u8; 32];
         Self::fill_random(&mut key)?;
@@ -95,3 +108,123 @@ impl ProducesTickets for AeadTicketer {
         Some(out)
     }
 }
+
+/// An in-progress key exchange. This has the algorithm,
+/// our private key, and our public key.
+pub struct RingKeyExchange {
+    skxg: &'static SupportedKxGroup,
+    privkey: EphemeralPrivateKey,
+    pub(crate) pubkey: ring::agreement::PublicKey,
+}
+
+impl Debug for RingKeyExchange {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.skxg.fmt(f)
+    }
+}
+
+impl KeyExchange for RingKeyExchange {
+    type SupportedGroup = SupportedKxGroup;
+
+    fn all_supported_groups() -> &'static [&'static Self::SupportedGroup] {
+        &ALL_KX_GROUPS
+    }
+
+    fn choose(
+        name: NamedGroup,
+        supported: &[&'static SupportedKxGroup],
+    ) -> Result<Self, KeyExchangeError> {
+        let skxg = match supported
+            .iter()
+            .find(|skxg| skxg.name == name)
+        {
+            Some(skxg) => skxg,
+            None => return Err(KeyExchangeError::UnsupportedGroup),
+        };
+
+        Self::start(skxg).map_err(KeyExchangeError::KeyExchangeFailed)
+    }
+
+    fn start(skxg: &'static SupportedKxGroup) -> Result<Self, GetRandomFailed> {
+        let rng = SystemRandom::new();
+        let privkey = match EphemeralPrivateKey::generate(skxg.agreement_algorithm, &rng) {
+            Ok(privkey) => privkey,
+            Err(_) => return Err(GetRandomFailed),
+        };
+
+        let pubkey = match privkey.compute_public_key() {
+            Ok(pubkey) => pubkey,
+            Err(_) => return Err(GetRandomFailed),
+        };
+
+        Ok(Self {
+            skxg,
+            privkey,
+            pubkey,
+        })
+    }
+
+    /// Return the group being used.
+    fn group(&self) -> NamedGroup {
+        self.skxg.name
+    }
+
+    fn pubkey(&self) -> &[u8] {
+        self.pubkey.as_ref()
+    }
+
+    /// Completes the key exchange, given the peer's public key.
+    ///
+    /// The shared secret is passed into the closure passed down in `f`, and the result of calling
+    /// `f` is returned to the caller.
+    fn complete<T>(self, peer: &[u8], f: impl FnOnce(&[u8]) -> Result<T, ()>) -> Result<T, Error> {
+        let peer_key = UnparsedPublicKey::new(self.skxg.agreement_algorithm, peer);
+        agree_ephemeral(self.privkey, &peer_key, (), f)
+            .map_err(|()| PeerMisbehaved::InvalidKeyShare.into())
+    }
+}
+
+/// A key-exchange group supported by Ring.
+///
+/// All possible instances of this class are provided by the library in
+/// the `ALL_KX_GROUPS` array.
+#[derive(Clone)]
+pub struct SupportedKxGroup {
+    /// The IANA "TLS Supported Groups" name of the group
+    pub name: NamedGroup,
+
+    /// The corresponding ring agreement::Algorithm
+    agreement_algorithm: &'static ring::agreement::Algorithm,
+}
+
+impl Debug for SupportedKxGroup {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.name.fmt(f)
+    }
+}
+
+impl SupportedGroup for SupportedKxGroup {
+    fn name(&self) -> NamedGroup {
+        self.name
+    }
+}
+
+/// Ephemeral ECDH on curve25519 (see RFC7748)
+pub static X25519: SupportedKxGroup = SupportedKxGroup {
+    name: NamedGroup::X25519,
+    agreement_algorithm: &ring::agreement::X25519,
+};
+
+/// Ephemeral ECDH on secp256r1 (aka NIST-P256)
+pub static SECP256R1: SupportedKxGroup = SupportedKxGroup {
+    name: NamedGroup::secp256r1,
+    agreement_algorithm: &ring::agreement::ECDH_P256,
+};
+
+/// Ephemeral ECDH on secp384r1 (aka NIST-P384)
+pub static SECP384R1: SupportedKxGroup = SupportedKxGroup {
+    name: NamedGroup::secp384r1,
+    agreement_algorithm: &ring::agreement::ECDH_P384,
+};
+
+static ALL_KX_GROUPS: [&SupportedKxGroup; 3] = [&X25519, &SECP256R1, &SECP384R1];

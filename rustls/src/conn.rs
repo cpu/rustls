@@ -5,6 +5,7 @@ use std::io;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 
+use crate::crypto::CryptoProvider;
 use crate::enums::ProtocolVersion;
 use crate::error::{Error, InvalidMessage, PeerMisbehaved};
 use crate::key;
@@ -1209,7 +1210,11 @@ impl CommonState {
     }
 
     #[cfg(feature = "tls12")]
-    pub(crate) fn start_encryption_tls12(&mut self, secrets: &ConnectionSecrets, side: Side) {
+    pub(crate) fn start_encryption_tls12(
+        &mut self,
+        secrets: &ConnectionSecrets<impl CryptoProvider>,
+        side: Side,
+    ) {
         let (dec, enc) = secrets.make_cipher_pair(side);
         self.record_layer
             .prepare_message_encrypter(enc);

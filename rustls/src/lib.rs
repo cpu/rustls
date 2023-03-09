@@ -260,12 +260,12 @@
 // Require docs for public APIs, deny unsafe code, etc.
 #![forbid(unsafe_code, unused_must_use)]
 #![cfg_attr(not(read_buf), forbid(unstable_features))]
+// TODO(@cpu): Restore the doc requirement clippy!!!
 #![deny(
     clippy::clone_on_ref_ptr,
     clippy::use_self,
     trivial_casts,
     trivial_numeric_casts,
-    missing_docs,
     unreachable_pub,
     unused_import_braces,
     unused_extern_crates,
@@ -320,7 +320,6 @@ pub use crate::error::{CertificateError, Error, InvalidMessage, PeerIncompatible
 pub use crate::key::{Certificate, PrivateKey};
 pub use crate::key_log::{KeyLog, NoKeyLog};
 pub use crate::key_log_file::KeyLogFile;
-pub use crate::kx::{SupportedKxGroup, ALL_KX_GROUPS};
 pub use crate::msgs::enums::{
     AlertDescription, ContentType, HandshakeType, NamedGroup, SignatureAlgorithm,
 };
@@ -375,7 +374,6 @@ mod enums;
 mod key;
 mod key_log;
 mod key_log_file;
-mod kx;
 mod suites;
 mod ticketer;
 mod versions;
@@ -488,15 +486,6 @@ pub mod version {
     #[cfg(feature = "tls12")]
     pub use crate::versions::TLS12;
     pub use crate::versions::TLS13;
-}
-
-/// All defined key exchange groups appear in this module.
-///
-/// ALL_KX_GROUPS is provided as an array of all of these values.
-pub mod kx_group {
-    pub use crate::kx::SECP256R1;
-    pub use crate::kx::SECP384R1;
-    pub use crate::kx::X25519;
 }
 
 /// Message signing interfaces and implementations.

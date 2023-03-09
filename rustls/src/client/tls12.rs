@@ -1,10 +1,17 @@
+use std::marker::PhantomData;
+use std::sync::Arc;
+
+pub(super) use server_hello::CompleteServerHelloHandling;
+
 use crate::check::{inappropriate_handshake_message, inappropriate_message};
+use crate::client::common::ClientAuthDetails;
+use crate::client::common::ServerCertDetails;
+use crate::client::{hs, ClientConfig, ServerName};
 use crate::conn::{CommonState, ConnectionRandoms, Side, State};
-use crate::crypto::CryptoProvider;
+use crate::crypto::{CryptoProvider, KeyExchange, KeyExchangeError};
 use crate::enums::ProtocolVersion;
 use crate::error::{Error, InvalidMessage, PeerMisbehaved};
 use crate::hash_hs::HandshakeHash;
-use crate::kx::KeyExchangeError;
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace};
 use crate::msgs::base::{Payload, PayloadU8};
@@ -24,19 +31,10 @@ use crate::suites::PartiallyExtractedSecrets;
 use crate::suites::SupportedCipherSuite;
 use crate::ticketer::TimeBase;
 use crate::tls12::{self, ConnectionSecrets, Tls12CipherSuite};
-use crate::{kx, verify};
+use crate::verify;
 
 use super::client_conn::ClientConnectionData;
 use super::hs::ClientContext;
-use crate::client::common::ClientAuthDetails;
-use crate::client::common::ServerCertDetails;
-use crate::client::{hs, ClientConfig, ServerName};
-
-use ring::agreement::PublicKey;
-
-use std::sync::Arc;
-
-pub(super) use server_hello::CompleteServerHelloHandling;
 
 mod server_hello {
     use crate::crypto::CryptoProvider;
@@ -46,7 +44,7 @@ mod server_hello {
 
     use super::*;
 
-    pub(in crate::client) struct CompleteServerHelloHandling<C> {
+    pub(in crate::client) struct CompleteServerHelloHandling<C: CryptoProvider> {
         pub(in crate::client) config: Arc<ClientConfig<C>>,
         pub(in crate::client) resuming_session: Option<persist::Tls12ClientSessionValue>,
         pub(in crate::client) server_name: ServerName,
@@ -191,7 +189,7 @@ mod server_hello {
     }
 }
 
-struct ExpectCertificate<C> {
+struct ExpectCertificate<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
@@ -252,7 +250,7 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectCertificate<C> {
     }
 }
 
-struct ExpectCertificateStatusOrServerKx<C> {
+struct ExpectCertificateStatusOrServerKx<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
@@ -326,7 +324,7 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectCertificateStatusO
     }
 }
 
-struct ExpectCertificateStatus<C> {
+struct ExpectCertificateStatus<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
@@ -380,7 +378,7 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectCertificateStatus<
     }
 }
 
-struct ExpectServerKx<C> {
+struct ExpectServerKx<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
@@ -453,9 +451,9 @@ fn emit_certificate(
     common.send_msg(cert, false);
 }
 
-fn emit_clientkx(transcript: &mut HandshakeHash, common: &mut CommonState, pubkey: &PublicKey) {
+fn emit_clientkx(transcript: &mut HandshakeHash, common: &mut CommonState, pubkey: &[u8]) {
     let mut buf = Vec::new();
-    let ecpoint = PayloadU8::new(Vec::from(pubkey.as_ref()));
+    let ecpoint = PayloadU8::new(Vec::from(pubkey));
     ecpoint.encode(&mut buf);
     let pubkey = Payload::new(buf);
 
@@ -507,7 +505,7 @@ fn emit_ccs(common: &mut CommonState) {
 }
 
 fn emit_finished(
-    secrets: &ConnectionSecrets,
+    secrets: &ConnectionSecrets<impl CryptoProvider>,
     transcript: &mut HandshakeHash,
     common: &mut CommonState,
 ) {
@@ -544,7 +542,7 @@ impl ServerKxDetails {
 // --- Either a CertificateRequest, or a ServerHelloDone. ---
 // Existence of the CertificateRequest tells us the server is asking for
 // client auth.  Otherwise we go straight to ServerHelloDone.
-struct ExpectServerDoneOrCertReq<C> {
+struct ExpectServerDoneOrCertReq<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
@@ -606,7 +604,7 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectServerDoneOrCertRe
     }
 }
 
-struct ExpectCertificateRequest<C> {
+struct ExpectCertificateRequest<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
@@ -667,7 +665,7 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectCertificateRequest
     }
 }
 
-struct ExpectServerDone<C> {
+struct ExpectServerDone<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
@@ -785,17 +783,18 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectServerDone<C> {
         let ecdh_params =
             tls12::decode_ecdh_params::<ServerECDHParams>(cx.common, &st.server_kx.kx_params)?;
         let named_group = ecdh_params.curve_params.named_group;
-        let kx = match kx::KeyExchange::choose(named_group, &st.config.kx_groups) {
-            Ok(kx) => kx,
-            Err(KeyExchangeError::UnsupportedGroup) => {
-                return Err(PeerMisbehaved::SelectedUnofferedKxGroup.into())
-            }
-            Err(KeyExchangeError::KeyExchangeFailed(err)) => return Err(err.into()),
-        };
+        let kx: <C as CryptoProvider>::KeyExchange =
+            match KeyExchange::choose(named_group, &st.config.kx_groups) {
+                Ok(kx) => kx,
+                Err(KeyExchangeError::UnsupportedGroup) => {
+                    return Err(PeerMisbehaved::SelectedUnofferedKxGroup.into())
+                }
+                Err(KeyExchangeError::KeyExchangeFailed(err)) => return Err(err.into()),
+            };
 
         // 5b.
         let mut transcript = st.transcript;
-        emit_clientkx(&mut transcript, cx.common, &kx.pubkey);
+        emit_clientkx(&mut transcript, cx.common, kx.pubkey());
         // nb. EMS handshake hash only runs up to ClientKeyExchange.
         let ems_seed = st
             .using_ems
@@ -863,9 +862,9 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectServerDone<C> {
     }
 }
 
-struct ExpectNewTicket<C> {
+struct ExpectNewTicket<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
-    secrets: ConnectionSecrets,
+    secrets: ConnectionSecrets<C>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
     server_name: ServerName,
@@ -907,9 +906,9 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectNewTicket<C> {
 }
 
 // -- Waiting for their CCS --
-struct ExpectCcs<C> {
+struct ExpectCcs<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
-    secrets: ConnectionSecrets,
+    secrets: ConnectionSecrets<C>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
     server_name: ServerName,
@@ -957,7 +956,7 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectCcs<C> {
     }
 }
 
-struct ExpectFinished<C> {
+struct ExpectFinished<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Tls12ClientSessionValue>,
     session_id: SessionID,
@@ -965,7 +964,7 @@ struct ExpectFinished<C> {
     using_ems: bool,
     transcript: HandshakeHash,
     ticket: Option<NewSessionTicketPayload>,
-    secrets: ConnectionSecrets,
+    secrets: ConnectionSecrets<C>,
     resuming: bool,
     cert_verified: verify::ServerCertVerified,
     sig_verified: verify::HandshakeSignatureValid,
@@ -1063,19 +1062,21 @@ impl<C: CryptoProvider> State<ClientConnectionData> for ExpectFinished<C> {
             _cert_verified: st.cert_verified,
             _sig_verified: st.sig_verified,
             _fin_verified,
+            backend: PhantomData,
         }))
     }
 }
 
 // -- Traffic transit state --
-struct ExpectTraffic {
-    secrets: ConnectionSecrets,
+struct ExpectTraffic<C: CryptoProvider> {
+    secrets: ConnectionSecrets<C>,
     _cert_verified: verify::ServerCertVerified,
     _sig_verified: verify::HandshakeSignatureValid,
     _fin_verified: verify::FinishedMessageVerified,
+    backend: PhantomData<C>,
 }
 
-impl State<ClientConnectionData> for ExpectTraffic {
+impl<C: CryptoProvider> State<ClientConnectionData> for ExpectTraffic<C> {
     fn handle(self: Box<Self>, cx: &mut ClientContext<'_>, m: Message) -> hs::NextStateOrError {
         match m.payload {
             MessagePayload::ApplicationData(payload) => cx

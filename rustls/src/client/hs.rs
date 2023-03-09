@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 #[cfg(feature = "logging")]
 use crate::bs_debug;
 use crate::check::inappropriate_handshake_message;
+use crate::client::client_conn::ClientConnectionData;
+use crate::client::common::ClientHelloDetails;
+use crate::client::{tls13, ClientConfig, ServerName};
 use crate::conn::{CommonState, ConnectionRandoms, State};
-use crate::crypto::CryptoProvider;
+use crate::crypto::{CryptoProvider, KeyExchange, KeyExchangeError, SupportedGroup};
 use crate::enums::{CipherSuite, ProtocolVersion};
 use crate::error::{CertificateError, Error, PeerIncompatible, PeerMisbehaved};
 use crate::hash_hs::HandshakeHashBuffer;
-use crate::kx::{self, KeyExchangeError};
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace};
 use crate::msgs::base::Payload;
@@ -28,11 +32,6 @@ use crate::SupportedCipherSuite;
 
 #[cfg(feature = "tls12")]
 use super::tls12;
-use crate::client::client_conn::ClientConnectionData;
-use crate::client::common::ClientHelloDetails;
-use crate::client::{tls13, ClientConfig, ServerName};
-
-use std::sync::Arc;
 
 pub(super) type NextState = Box<dyn State<ClientConnectionData>>;
 pub(super) type NextStateOrError = Result<NextState, Error>;
@@ -141,7 +140,7 @@ pub(super) fn start_handshake<C: CryptoProvider>(
     let hello_details = ClientHelloDetails::new();
     let sent_tls13_fake_ccs = false;
     let may_send_sct_list = config.verifier.request_scts();
-    Ok(emit_client_hello_for_retry(
+    Ok(emit_client_hello_for_retry::<C>(
         config,
         cx,
         resuming_session,
@@ -160,7 +159,7 @@ pub(super) fn start_handshake<C: CryptoProvider>(
     ))
 }
 
-struct ExpectServerHello<C> {
+struct ExpectServerHello<C: CryptoProvider> {
     config: Arc<ClientConfig<C>>,
     resuming_session: Option<persist::Retrieved<persist::ClientSessionValue>>,
     server_name: ServerName,
@@ -169,19 +168,19 @@ struct ExpectServerHello<C> {
     transcript_buffer: HandshakeHashBuffer,
     early_key_schedule: Option<KeyScheduleEarly>,
     hello: ClientHelloDetails,
-    offered_key_share: Option<kx::KeyExchange>,
+    offered_key_share: Option<C::KeyExchange>,
     session_id: SessionID,
     sent_tls13_fake_ccs: bool,
     suite: Option<SupportedCipherSuite>,
 }
 
-struct ExpectServerHelloOrHelloRetryRequest<C> {
+struct ExpectServerHelloOrHelloRetryRequest<C: CryptoProvider> {
     next: ExpectServerHello<C>,
     extra_exts: Vec<ClientExtension>,
 }
 
-fn emit_client_hello_for_retry(
-    config: Arc<ClientConfig<impl CryptoProvider>>,
+fn emit_client_hello_for_retry<C: CryptoProvider>(
+    config: Arc<ClientConfig<C>>,
     cx: &mut ClientContext<'_>,
     resuming_session: Option<persist::Retrieved<persist::ClientSessionValue>>,
     random: Random,
@@ -192,7 +191,7 @@ fn emit_client_hello_for_retry(
     session_id: Option<SessionID>,
     retryreq: Option<&HelloRetryRequest>,
     server_name: ServerName,
-    key_share: Option<kx::KeyExchange>,
+    key_share: Option<C::KeyExchange>,
     extra_exts: Vec<ClientExtension>,
     may_send_sct_list: bool,
     suite: Option<SupportedCipherSuite>,
@@ -234,7 +233,7 @@ fn emit_client_hello_for_retry(
             config
                 .kx_groups
                 .iter()
-                .map(|skxg| skxg.name)
+                .map(|skxg| skxg.name())
                 .collect(),
         ),
         ClientExtension::SignatureAlgorithms(
@@ -256,7 +255,7 @@ fn emit_client_hello_for_retry(
 
     if let Some(key_share) = &key_share {
         debug_assert!(support_tls13);
-        let key_share = KeyShareEntry::new(key_share.group(), key_share.pubkey.as_ref());
+        let key_share = KeyShareEntry::new(key_share.group(), key_share.pubkey());
         exts.push(ClientExtension::KeyShare(vec![key_share]));
     }
 
@@ -752,7 +751,7 @@ impl<C: CryptoProvider> ExpectServerHelloOrHelloRetryRequest<C> {
 
         let key_share = match req_group {
             Some(group) if group != offered_key_share.group() => {
-                match kx::KeyExchange::choose(group, &self.next.config.kx_groups) {
+                match KeyExchange::choose(group, self.next.config.kx_groups.as_slice()) {
                     Ok(kx) => kx,
                     Err(KeyExchangeError::UnsupportedGroup) => {
                         return Err(cx.common.illegal_param(

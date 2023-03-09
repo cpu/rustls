@@ -18,7 +18,7 @@ use base64::prelude::{Engine, BASE64_STANDARD};
 use env_logger;
 
 use rustls;
-use rustls::crypto::{ring::Ring, CryptoProvider};
+use rustls::crypto::{ring::Ring, CryptoProvider, KeyExchange};
 use rustls::internal::msgs::codec::Codec;
 use rustls::internal::msgs::enums::KeyUpdateRequest;
 use rustls::internal::msgs::persist;
@@ -323,11 +323,11 @@ fn lookup_scheme(scheme: u16) -> rustls::SignatureScheme {
     }
 }
 
-fn lookup_kx_group(group: u16) -> &'static rustls::SupportedKxGroup {
+fn lookup_kx_group(group: u16) -> &'static rustls::crypto::ring::SupportedKxGroup {
     match group {
-        0x001d => &rustls::kx_group::X25519,
-        0x0017 => &rustls::kx_group::SECP256R1,
-        0x0018 => &rustls::kx_group::SECP384R1,
+        0x001d => &rustls::crypto::ring::X25519,
+        0x0017 => &rustls::crypto::ring::SECP256R1,
+        0x0018 => &rustls::crypto::ring::SECP384R1,
         _ => {
             println_err!("Unsupported kx group {:04x}", group);
             process::exit(BOGO_NACK);
@@ -414,7 +414,7 @@ fn make_server_cfg(opts: &Options) -> Arc<rustls::ServerConfig<Ring>> {
             .map(|curveid| lookup_kx_group(*curveid))
             .collect()
     } else {
-        rustls::ALL_KX_GROUPS.to_vec()
+        rustls::crypto::ring::RingKeyExchange::all_supported_groups().to_vec()
     };
 
     let mut cfg = rustls::ServerConfig::builder()
@@ -534,7 +534,7 @@ fn make_client_cfg(opts: &Options) -> Arc<rustls::ClientConfig<Ring>> {
             .map(|curveid| lookup_kx_group(*curveid))
             .collect()
     } else {
-        rustls::ALL_KX_GROUPS.to_vec()
+        rustls::crypto::ring::RingKeyExchange::all_supported_groups().to_vec()
     };
 
     let cfg = rustls::ClientConfig::builder()

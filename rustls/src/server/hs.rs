@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::conn::{CommonState, ConnectionRandoms, State};
 use crate::crypto::CryptoProvider;
 #[cfg(feature = "tls12")]
@@ -15,6 +17,8 @@ use crate::msgs::handshake::{ClientHelloPayload, Random, ServerExtension};
 use crate::msgs::handshake::{ConvertProtocolNameList, ConvertServerNameList, HandshakePayload};
 use crate::msgs::message::{Message, MessagePayload};
 use crate::msgs::persist;
+use crate::server::common::ActiveCertifiedKey;
+use crate::server::tls13;
 use crate::server::{ClientHello, ServerConfig};
 use crate::suites;
 use crate::SupportedCipherSuite;
@@ -22,10 +26,6 @@ use crate::SupportedCipherSuite;
 use super::server_conn::ServerConnectionData;
 #[cfg(feature = "tls12")]
 use super::tls12;
-use crate::server::common::ActiveCertifiedKey;
-use crate::server::tls13;
-
-use std::sync::Arc;
 
 pub(super) type NextState = Box<dyn State<ServerConnectionData>>;
 pub(super) type NextStateOrError = Result<NextState, Error>;
@@ -77,7 +77,7 @@ impl ExtensionProcessing {
         Default::default()
     }
 
-    pub(super) fn process_common<C>(
+    pub(super) fn process_common<C: CryptoProvider>(
         &mut self,
         config: &ServerConfig<C>,
         cx: &mut ServerContext<'_>,
@@ -193,7 +193,7 @@ impl ExtensionProcessing {
     }
 
     #[cfg(feature = "tls12")]
-    pub(super) fn process_tls12<C>(
+    pub(super) fn process_tls12<C: CryptoProvider>(
         &mut self,
         config: &ServerConfig<C>,
         hello: &ClientHelloPayload,
@@ -234,7 +234,7 @@ impl ExtensionProcessing {
     }
 }
 
-pub(super) struct ExpectClientHello<C> {
+pub(super) struct ExpectClientHello<C: CryptoProvider> {
     pub(super) config: Arc<ServerConfig<C>>,
     pub(super) extra_exts: Vec<ServerExtension>,
     pub(super) transcript: HandshakeHashOrBuffer,

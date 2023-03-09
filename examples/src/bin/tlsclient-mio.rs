@@ -362,7 +362,7 @@ fn apply_dangerous_options(args: &Args, cfg: &mut rustls::ClientConfig<impl Cryp
 }
 
 #[cfg(not(feature = "dangerous_configuration"))]
-fn apply_dangerous_options<C>(args: &Args, _: &mut rustls::ClientConfig<C>) {
+fn apply_dangerous_options<C: CryptoProvider>(args: &Args, _: &mut rustls::ClientConfig<C>) {
     if args.flag_insecure {
         panic!("This build does not support --insecure.");
     }
