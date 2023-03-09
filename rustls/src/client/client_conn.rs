@@ -7,10 +7,9 @@ use std::{fmt, io, mem};
 
 use crate::builder::{ConfigBuilder, WantsCipherSuites};
 use crate::conn::{CommonState, ConnectionCommon, Protocol, Side};
-use crate::crypto::CryptoProvider;
+use crate::crypto::{CryptoProvider, KeyExchange};
 use crate::enums::{CipherSuite, ProtocolVersion, SignatureScheme};
 use crate::error::Error;
-use crate::kx::SupportedKxGroup;
 #[cfg(feature = "logging")]
 use crate::log::trace;
 #[cfg(feature = "quic")]
@@ -130,7 +129,7 @@ pub trait ResolvesClientCert: Send + Sync {
 /// * [`ClientConfig::session_storage`]: the default stores 256 sessions in memory.
 /// * [`ClientConfig::alpn_protocols`]: the default is empty -- no ALPN protocol is negotiated.
 /// * [`ClientConfig::key_log`]: key material is not logged.
-pub struct ClientConfig<C> {
+pub struct ClientConfig<C: CryptoProvider> {
     /// List of ciphersuites, in preference order.
     pub(super) cipher_suites: Vec<SupportedCipherSuite>,
 
@@ -139,7 +138,7 @@ pub struct ClientConfig<C> {
     ///
     /// The first element in this list is the _default key share algorithm_,
     /// and in TLS1.3 a key share for it is sent in the client hello.
-    pub(super) kx_groups: Vec<&'static SupportedKxGroup>,
+    pub(super) kx_groups: Vec<&'static <C::KeyExchange as KeyExchange>::SupportedGroup>,
 
     /// Which ALPN protocols we include in our client hello.
     /// If empty, no ALPN extension is sent.
@@ -198,7 +197,7 @@ pub struct ClientConfig<C> {
     pub(crate) provider: PhantomData<C>,
 }
 
-impl<C> Clone for ClientConfig<C> {
+impl<C: CryptoProvider> Clone for ClientConfig<C> {
     fn clone(&self) -> Self {
         Self {
             cipher_suites: self.cipher_suites.clone(),
@@ -220,7 +219,7 @@ impl<C> Clone for ClientConfig<C> {
     }
 }
 
-impl<C> fmt::Debug for ClientConfig<C> {
+impl<C: CryptoProvider> fmt::Debug for ClientConfig<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ClientConfig")
             .field("alpn_protocols", &self.alpn_protocols)
@@ -347,18 +346,20 @@ impl StdError for InvalidDnsNameError {}
 pub(super) mod danger {
     use std::sync::Arc;
 
+    use crate::crypto::CryptoProvider;
+
     use super::verify::ServerCertVerifier;
     use super::ClientConfig;
 
     /// Accessor for dangerous configuration options.
     #[derive(Debug)]
     #[cfg_attr(docsrs, doc(cfg(feature = "dangerous_configuration")))]
-    pub struct DangerousClientConfig<'a, C> {
+    pub struct DangerousClientConfig<'a, C: CryptoProvider> {
         /// The underlying ClientConfig
         pub cfg: &'a mut ClientConfig<C>,
     }
 
-    impl<'a, C> DangerousClientConfig<'a, C> {
+    impl<'a, C: CryptoProvider> DangerousClientConfig<'a, C> {
         /// Overrides the default `ServerCertVerifier` with something else.
         pub fn set_certificate_verifier(&mut self, verifier: Arc<dyn ServerCertVerifier>) {
             self.cfg.verifier = verifier;

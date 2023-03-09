@@ -1,8 +1,17 @@
+use std::fmt;
+use std::marker::PhantomData;
+
+use ring::aead;
+use ring::digest::Digest;
+
+pub(crate) use cipher::{AesGcm, ChaCha20Poly1305, Tls12AeadAlgorithm};
+
 use crate::cipher::{MessageDecrypter, MessageEncrypter};
 use crate::conn::{CommonState, ConnectionRandoms, Side};
+use crate::crypto::ring::Ring;
+use crate::crypto::{CryptoProvider, KeyExchange};
 use crate::enums::{CipherSuite, SignatureScheme};
 use crate::error::{Error, InvalidMessage};
-use crate::kx;
 use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::enums::AlertDescription;
 use crate::msgs::handshake::KeyExchangeAlgorithm;
@@ -10,14 +19,7 @@ use crate::suites::{BulkAlgorithm, CipherSuiteCommon, SupportedCipherSuite};
 #[cfg(feature = "secret_extraction")]
 use crate::suites::{ConnectionTrafficSecrets, PartiallyExtractedSecrets};
 
-use ring::aead;
-use ring::digest::Digest;
-
-use std::fmt;
-
 mod cipher;
-pub(crate) use cipher::{AesGcm, ChaCha20Poly1305, Tls12AeadAlgorithm};
-
 mod prf;
 
 /// The TLS1.2 ciphersuite TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256.
@@ -198,15 +200,16 @@ impl fmt::Debug for Tls12CipherSuite {
 }
 
 /// TLS1.2 per-connection keying material
-pub(crate) struct ConnectionSecrets {
+pub(crate) struct ConnectionSecrets<C: CryptoProvider> {
     pub(crate) randoms: ConnectionRandoms,
     suite: &'static Tls12CipherSuite,
     pub(crate) master_secret: [u8; 48],
+    backend: PhantomData<C>,
 }
 
-impl ConnectionSecrets {
+impl<C: CryptoProvider> ConnectionSecrets<C> {
     pub(crate) fn from_key_exchange(
-        kx: kx::KeyExchange,
+        kx: C::KeyExchange,
         peer_pub_key: &[u8],
         ems_seed: Option<Digest>,
         randoms: ConnectionRandoms,
@@ -216,6 +219,7 @@ impl ConnectionSecrets {
             randoms,
             suite,
             master_secret: [0u8; 48],
+            backend: PhantomData,
         };
 
         let (label, seed) = match ems_seed {
@@ -240,6 +244,42 @@ impl ConnectionSecrets {
         Ok(ret)
     }
 
+    pub(crate) fn suite(&self) -> &'static Tls12CipherSuite {
+        self.suite
+    }
+
+    pub(crate) fn get_master_secret(&self) -> Vec<u8> {
+        let mut ret = Vec::new();
+        ret.extend_from_slice(&self.master_secret);
+        ret
+    }
+
+    pub(crate) fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) {
+        let mut randoms = Vec::new();
+        randoms.extend_from_slice(&self.randoms.client);
+        randoms.extend_from_slice(&self.randoms.server);
+        if let Some(context) = context {
+            assert!(context.len() <= 0xffff);
+            (context.len() as u16).encode(&mut randoms);
+            randoms.extend_from_slice(context);
+        }
+
+        prf::prf(
+            output,
+            self.suite.hmac_algorithm,
+            &self.master_secret,
+            label,
+            &randoms,
+        );
+    }
+}
+
+impl ConnectionSecrets<Ring> {
     pub(crate) fn new_resume(
         randoms: ConnectionRandoms,
         suite: &'static Tls12CipherSuite,
@@ -249,6 +289,7 @@ impl ConnectionSecrets {
             randoms,
             suite,
             master_secret: [0u8; 48],
+            backend: PhantomData,
         };
         ret.master_secret
             .copy_from_slice(master_secret);
@@ -330,16 +371,6 @@ impl ConnectionSecrets {
         out
     }
 
-    pub(crate) fn suite(&self) -> &'static Tls12CipherSuite {
-        self.suite
-    }
-
-    pub(crate) fn get_master_secret(&self) -> Vec<u8> {
-        let mut ret = Vec::new();
-        ret.extend_from_slice(&self.master_secret);
-        ret
-    }
-
     fn make_verify_data(&self, handshake_hash: &Digest, label: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         out.resize(12, 0u8);
@@ -360,30 +391,6 @@ impl ConnectionSecrets {
 
     pub(crate) fn server_verify_data(&self, handshake_hash: &Digest) -> Vec<u8> {
         self.make_verify_data(handshake_hash, b"server finished")
-    }
-
-    pub(crate) fn export_keying_material(
-        &self,
-        output: &mut [u8],
-        label: &[u8],
-        context: Option<&[u8]>,
-    ) {
-        let mut randoms = Vec::new();
-        randoms.extend_from_slice(&self.randoms.client);
-        randoms.extend_from_slice(&self.randoms.server);
-        if let Some(context) = context {
-            assert!(context.len() <= 0xffff);
-            (context.len() as u16).encode(&mut randoms);
-            randoms.extend_from_slice(context);
-        }
-
-        prf::prf(
-            output,
-            self.suite.hmac_algorithm,
-            &self.master_secret,
-            label,
-            &randoms,
-        );
     }
 
     #[cfg(feature = "secret_extraction")]
@@ -513,9 +520,10 @@ pub(crate) const DOWNGRADE_SENTINEL: [u8; 8] = [0x44, 0x4f, 0x57, 0x4e, 0x47, 0x
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::conn::{CommonState, Side};
     use crate::msgs::handshake::{ClientECDHParams, ServerECDHParams};
+
+    use super::*;
 
     #[test]
     fn server_ecdhe_remaining_bytes() {
