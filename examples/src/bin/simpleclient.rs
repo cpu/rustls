@@ -1,3 +1,5 @@
+use std::io::{stdout, Read, Write};
+use std::net::TcpStream;
 /// This is the simplest possible client using rustls that does something useful:
 /// it accepts the default configuration, loads some root certs, and then connects
 /// to google.com and issues a basic HTTP request.  The response is printed to stdout.
@@ -9,10 +11,7 @@
 /// that is sensible outside of example code.
 use std::sync::Arc;
 
-use std::io::{stdout, Read, Write};
-use std::net::TcpStream;
-
-use rustls::crypto::Ring;
+use rustls::crypto::ring::Ring;
 use rustls::{OwnedTrustAnchor, RootCertStore};
 
 fn main() {

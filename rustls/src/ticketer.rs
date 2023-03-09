@@ -1,13 +1,13 @@
+use std::mem;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time;
+
 #[cfg(test)]
-use crate::crypto::Ring;
+use crate::crypto::ring::Ring;
 use crate::crypto::CryptoProvider;
 use crate::rand;
 use crate::server::ProducesTickets;
 use crate::Error;
-
-use std::mem;
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time;
 
 /// The timebase for expiring and rolling tickets and ticketing
 /// keys.  This is UNIX wall time in seconds.

@@ -1,22 +1,19 @@
-use std::sync::Arc;
-
-use mio::net::{TcpListener, TcpStream};
-use rustls::crypto::Ring;
-
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate serde_derive;
 
 use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::io::{BufReader, Read, Write};
 use std::net;
-
-#[macro_use]
-extern crate serde_derive;
+use std::sync::Arc;
 
 use docopt::Docopt;
+use mio::net::{TcpListener, TcpStream};
 
+use rustls::crypto::ring::Ring;
 use rustls::server::{
     AllowAnyAnonymousOrAuthenticatedClient, AllowAnyAuthenticatedClient, NoClientAuth,
 };

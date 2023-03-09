@@ -9,9 +9,13 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use rustls::client::ResolvesClientCert;
-use rustls::crypto::{CryptoProvider, Ring};
+use rustls::crypto::{ring::Ring, CryptoProvider};
 use rustls::internal::msgs::base::Payload;
 use rustls::internal::msgs::codec::Codec;
+use rustls::internal::msgs::{
+    handshake::ClientExtension, handshake::HandshakePayload, message::Message,
+    message::MessagePayload,
+};
 #[cfg(feature = "quic")]
 use rustls::quic::{self, ClientQuicExt, QuicExt, ServerQuicExt};
 use rustls::server::{AllowAnyAnonymousOrAuthenticatedClient, ClientHello, ResolvesServerCert};
@@ -27,8 +31,9 @@ use rustls::{ServerConfig, ServerConnection};
 use rustls::{Stream, StreamOwned};
 use rustls::{SupportedCipherSuite, ALL_CIPHER_SUITES};
 
-mod common;
 use crate::common::*;
+
+mod common;
 
 fn alpn_test_error(
     server_protos: Vec<Vec<u8>>,
@@ -3012,8 +3017,9 @@ fn early_data_can_be_rejected_by_server() {
 
 #[cfg(feature = "quic")]
 mod test_quic {
-    use super::*;
     use rustls::Connection;
+
+    use super::*;
 
     // Returns the sender's next secrets to use, or the receiver's error.
     fn step(
@@ -4066,11 +4072,6 @@ fn connection_types_are_not_huge() {
     assert_lt(mem::size_of::<ServerConnection>(), 1600);
     assert_lt(mem::size_of::<ClientConnection>(), 1600);
 }
-
-use rustls::internal::msgs::{
-    handshake::ClientExtension, handshake::HandshakePayload, message::Message,
-    message::MessagePayload,
-};
 
 #[test]
 fn test_server_rejects_duplicate_sni_names() {

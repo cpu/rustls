@@ -4,19 +4,6 @@
 // https://boringssl.googlesource.com/boringssl/+/master/ssl/test
 //
 
-use base64::prelude::{Engine, BASE64_STANDARD};
-use env_logger;
-use rustls;
-
-use rustls::crypto::{CryptoProvider, Ring};
-use rustls::internal::msgs::codec::Codec;
-use rustls::internal::msgs::enums::KeyUpdateRequest;
-use rustls::internal::msgs::persist;
-use rustls::quic::{self, ClientQuicExt, QuicExt, ServerQuicExt};
-use rustls::server::ClientHello;
-use rustls::ProtocolVersion;
-use rustls::{CertificateError, ClientConnection, Connection, ServerConnection, Side};
-
 use std::env;
 use std::fs;
 use std::io;
@@ -26,6 +13,19 @@ use std::net;
 use std::process;
 use std::sync::Arc;
 use std::time::SystemTime;
+
+use base64::prelude::{Engine, BASE64_STANDARD};
+use env_logger;
+
+use rustls;
+use rustls::crypto::{ring::Ring, CryptoProvider};
+use rustls::internal::msgs::codec::Codec;
+use rustls::internal::msgs::enums::KeyUpdateRequest;
+use rustls::internal::msgs::persist;
+use rustls::quic::{self, ClientQuicExt, QuicExt, ServerQuicExt};
+use rustls::server::ClientHello;
+use rustls::ProtocolVersion;
+use rustls::{CertificateError, ClientConnection, Connection, ServerConnection, Side};
 
 static BOGO_NACK: i32 = 89;
 

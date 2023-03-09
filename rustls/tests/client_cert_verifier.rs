@@ -2,7 +2,16 @@
 
 #![cfg(feature = "dangerous_configuration")]
 
-mod common;
+use std::sync::Arc;
+
+use rustls::client::WebPkiVerifier;
+use rustls::crypto::ring::Ring;
+use rustls::internal::msgs::base::PayloadU16;
+use rustls::server::{ClientCertVerified, ClientCertVerifier};
+use rustls::{
+    AlertDescription, Certificate, ClientConnection, DistinguishedNames, Error, InvalidMessage,
+    ServerConfig, ServerConnection, SignatureScheme,
+};
 
 use crate::common::{
     assert_debug_eq, dns_name, do_handshake_until_both_error, do_handshake_until_error,
@@ -10,15 +19,8 @@ use crate::common::{
     make_client_config_with_versions_with_auth, make_pair_for_arc_configs, ErrorFromPeer, KeyType,
     ALL_KEY_TYPES,
 };
-use rustls::client::WebPkiVerifier;
-use rustls::crypto::Ring;
-use rustls::internal::msgs::base::PayloadU16;
-use rustls::server::{ClientCertVerified, ClientCertVerifier};
-use rustls::{
-    AlertDescription, Certificate, ClientConnection, DistinguishedNames, Error, InvalidMessage,
-    ServerConfig, ServerConnection, SignatureScheme,
-};
-use std::sync::Arc;
+
+mod common;
 
 // Client is authorized!
 fn ver_ok() -> Result<ClientCertVerified, Error> {

@@ -1,21 +1,19 @@
-use std::process;
-use std::sync::Arc;
-
-use mio::net::TcpStream;
-use rustls::crypto::CryptoProvider;
-use rustls::crypto::Ring;
+#[macro_use]
+extern crate serde_derive;
 
 use std::fs;
 use std::io;
 use std::io::{BufReader, Read, Write};
 use std::net::SocketAddr;
+use std::process;
 use std::str;
-
-#[macro_use]
-extern crate serde_derive;
+use std::sync::Arc;
 
 use docopt::Docopt;
+use mio::net::TcpStream;
 
+use rustls::crypto::ring::Ring;
+use rustls::crypto::CryptoProvider;
 use rustls::{OwnedTrustAnchor, RootCertStore};
 
 const CLIENT: mio::Token = mio::Token(0);

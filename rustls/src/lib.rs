@@ -120,7 +120,7 @@
 //!
 //! ```rust,no_run
 //! # let root_store: rustls::RootCertStore = panic!();
-//! let config = rustls::ClientConfig::<rustls::crypto::Ring>::builder()
+//! let config = rustls::ClientConfig::<rustls::crypto::ring::Ring>::builder()
 //!     .with_safe_defaults()
 //!     .with_root_certificates(root_store)
 //!     .with_no_client_auth();
@@ -146,7 +146,7 @@
 //! #          )
 //! #      })
 //! # );
-//! # let config = rustls::ClientConfig::<rustls::crypto::Ring>::builder()
+//! # let config = rustls::ClientConfig::<rustls::crypto::ring::Ring>::builder()
 //! #     .with_safe_defaults()
 //! #     .with_root_certificates(root_store)
 //! #     .with_no_client_auth();
@@ -179,7 +179,7 @@
 //! errors.
 //!
 //! ```rust,no_run
-//! # let mut client = rustls::ClientConnection::new::<rustls::crypto::Ring>(panic!(), panic!()).unwrap();
+//! # let mut client = rustls::ClientConnection::new::<rustls::crypto::ring::Ring>(panic!(), panic!()).unwrap();
 //! # struct Socket { }
 //! # impl Socket {
 //! #   fn ready_for_write(&self) -> bool { false }
@@ -304,6 +304,39 @@
 #[cfg(feature = "logging")]
 use log;
 
+pub use client::{ClientConfig, ClientConnection, ServerName};
+pub use server::{ServerConfig, ServerConnection};
+
+// The public interface is:
+pub use crate::anchors::{OwnedTrustAnchor, RootCertStore};
+pub use crate::builder::{
+    ConfigBuilder, ConfigSide, WantsCipherSuites, WantsKxGroups, WantsVerifier, WantsVersions,
+};
+pub use crate::conn::{
+    CommonState, Connection, ConnectionCommon, IoState, Reader, Side, SideData, Writer,
+};
+pub use crate::enums::{CipherSuite, ProtocolVersion, SignatureScheme};
+pub use crate::error::{CertificateError, Error, InvalidMessage, PeerIncompatible, PeerMisbehaved};
+pub use crate::key::{Certificate, PrivateKey};
+pub use crate::key_log::{KeyLog, NoKeyLog};
+pub use crate::key_log_file::KeyLogFile;
+pub use crate::kx::{SupportedKxGroup, ALL_KX_GROUPS};
+pub use crate::msgs::enums::{
+    AlertDescription, ContentType, HandshakeType, NamedGroup, SignatureAlgorithm,
+};
+pub use crate::msgs::handshake::{DigitallySignedStruct, DistinguishedNames};
+pub use crate::stream::{Stream, StreamOwned};
+pub use crate::suites::{
+    BulkAlgorithm, SupportedCipherSuite, ALL_CIPHER_SUITES, DEFAULT_CIPHER_SUITES,
+};
+#[cfg(feature = "secret_extraction")]
+pub use crate::suites::{ConnectionTrafficSecrets, ExtractedSecrets};
+pub use crate::ticketer::Ticketer;
+#[cfg(feature = "tls12")]
+pub use crate::tls12::Tls12CipherSuite;
+pub use crate::tls13::Tls13CipherSuite;
+pub use crate::versions::{SupportedProtocolVersion, ALL_VERSIONS, DEFAULT_VERSIONS};
+
 #[cfg(not(feature = "logging"))]
 #[macro_use]
 mod log {
@@ -364,48 +397,11 @@ pub mod internal {
     }
 }
 
-// The public interface is:
-pub use crate::anchors::{OwnedTrustAnchor, RootCertStore};
-pub use crate::builder::{
-    ConfigBuilder, ConfigSide, WantsCipherSuites, WantsKxGroups, WantsVerifier, WantsVersions,
-};
-pub use crate::conn::{
-    CommonState, Connection, ConnectionCommon, IoState, Reader, Side, SideData, Writer,
-};
-pub use crate::enums::{CipherSuite, ProtocolVersion, SignatureScheme};
-pub use crate::error::{CertificateError, Error, InvalidMessage, PeerIncompatible, PeerMisbehaved};
-pub use crate::key::{Certificate, PrivateKey};
-pub use crate::key_log::{KeyLog, NoKeyLog};
-pub use crate::key_log_file::KeyLogFile;
-pub use crate::kx::{SupportedKxGroup, ALL_KX_GROUPS};
-pub use crate::msgs::enums::{
-    AlertDescription, ContentType, HandshakeType, NamedGroup, SignatureAlgorithm,
-};
-pub use crate::msgs::handshake::{DigitallySignedStruct, DistinguishedNames};
-pub use crate::stream::{Stream, StreamOwned};
-pub use crate::suites::{
-    BulkAlgorithm, SupportedCipherSuite, ALL_CIPHER_SUITES, DEFAULT_CIPHER_SUITES,
-};
-#[cfg(feature = "secret_extraction")]
-pub use crate::suites::{ConnectionTrafficSecrets, ExtractedSecrets};
-pub use crate::ticketer::Ticketer;
-#[cfg(feature = "tls12")]
-pub use crate::tls12::Tls12CipherSuite;
-pub use crate::tls13::Tls13CipherSuite;
-pub use crate::versions::{SupportedProtocolVersion, ALL_VERSIONS, DEFAULT_VERSIONS};
-
 /// Items for use in a client.
 pub mod client {
-    pub(super) mod builder;
-    mod client_conn;
-    mod common;
-    pub(super) mod handy;
-    mod hs;
-    #[cfg(feature = "tls12")]
-    mod tls12;
-    mod tls13;
-
     pub use builder::{WantsClientCert, WantsTransparencyPolicyOrClientCert};
+    #[cfg(feature = "dangerous_configuration")]
+    pub use client_conn::danger::DangerousClientConfig;
     #[cfg(feature = "quic")]
     pub use client_conn::ClientQuicExt;
     pub use client_conn::ClientSessionStore;
@@ -415,35 +411,27 @@ pub mod client {
     pub use client_conn::{ClientConfig, ClientConnection, ClientConnectionData, WriteEarlyData};
     pub use handy::{ClientSessionMemoryCache, NoClientSessionStorage};
 
+    #[cfg(feature = "tls12")]
+    pub use crate::msgs::persist::Tls12ClientSessionValue;
+    pub use crate::msgs::persist::Tls13ClientSessionValue;
     #[cfg(feature = "dangerous_configuration")]
     pub use crate::verify::{
         CertificateTransparencyPolicy, HandshakeSignatureValid, ServerCertVerified,
         ServerCertVerifier, WebPkiVerifier,
     };
-    #[cfg(feature = "dangerous_configuration")]
-    pub use client_conn::danger::DangerousClientConfig;
 
-    #[cfg(feature = "tls12")]
-    pub use crate::msgs::persist::Tls12ClientSessionValue;
-    pub use crate::msgs::persist::Tls13ClientSessionValue;
-}
-
-pub use client::{ClientConfig, ClientConnection, ServerName};
-
-/// Items for use in a server.
-pub mod server {
-    pub(crate) mod builder;
+    pub(super) mod builder;
+    mod client_conn;
     mod common;
-    pub(crate) mod handy;
+    pub(super) mod handy;
     mod hs;
-    mod server_conn;
     #[cfg(feature = "tls12")]
     mod tls12;
     mod tls13;
+}
 
-    pub use crate::verify::{
-        AllowAnyAnonymousOrAuthenticatedClient, AllowAnyAuthenticatedClient, NoClientAuth,
-    };
+/// Items for use in a server.
+pub mod server {
     pub use builder::WantsServerCert;
     pub use handy::ResolvesServerCertUsingSni;
     pub use handy::{NoServerSessionStorage, ServerSessionMemoryCache};
@@ -455,11 +443,21 @@ pub mod server {
     };
     pub use server_conn::{ClientHello, ProducesTickets, ResolvesServerCert};
 
+    pub use crate::verify::{
+        AllowAnyAnonymousOrAuthenticatedClient, AllowAnyAuthenticatedClient, NoClientAuth,
+    };
     #[cfg(feature = "dangerous_configuration")]
     pub use crate::verify::{ClientCertVerified, ClientCertVerifier, DnsName};
-}
 
-pub use server::{ServerConfig, ServerConnection};
+    pub(crate) mod builder;
+    mod common;
+    pub(crate) mod handy;
+    mod hs;
+    mod server_conn;
+    #[cfg(feature = "tls12")]
+    mod tls12;
+    mod tls13;
+}
 
 /// All defined ciphersuites appear in this module.
 ///

@@ -1,12 +1,11 @@
+use std::io::{stdout, Read, Write};
+use std::net::TcpStream;
 /// limitedclient: This example demonstrates usage of ClientConfig building
 /// so that unused cryptography in rustls can be discarded by the linker.  You can
 /// observe using `nm` that the binary of this program does not contain any AES code.
 use std::sync::Arc;
 
-use std::io::{stdout, Read, Write};
-use std::net::TcpStream;
-
-use rustls::crypto::Ring;
+use rustls::crypto::ring::Ring;
 use rustls::OwnedTrustAnchor;
 
 fn main() {

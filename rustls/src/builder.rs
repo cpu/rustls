@@ -1,11 +1,11 @@
+use std::fmt;
+use std::marker::PhantomData;
+
 use crate::crypto::CryptoProvider;
 use crate::error::Error;
 use crate::kx::{SupportedKxGroup, ALL_KX_GROUPS};
 use crate::suites::{SupportedCipherSuite, DEFAULT_CIPHER_SUITES};
 use crate::versions;
-
-use std::fmt;
-use std::marker::PhantomData;
 
 /// Building a [`ServerConfig`] or [`ClientConfig`] in a linker-friendly and
 /// complete way.
@@ -21,7 +21,7 @@ use std::marker::PhantomData;
 ///
 /// ```no_run
 /// # use rustls::ServerConfig;
-/// # use rustls::crypto::Ring;
+/// # use rustls::crypto::ring::Ring;
 /// # let certs = vec![];
 /// # let private_key = rustls::PrivateKey(vec![]);
 /// ServerConfig::<Ring>::builder()
@@ -38,7 +38,7 @@ use std::marker::PhantomData;
 ///
 /// ```no_run
 /// # use rustls::ServerConfig;
-/// # use rustls::crypto::Ring;
+/// # use rustls::crypto::ring::Ring;
 /// # let certs = vec![];
 /// # let private_key = rustls::PrivateKey(vec![]);
 /// ServerConfig::<Ring>::builder()
@@ -52,7 +52,7 @@ use std::marker::PhantomData;
 ///
 /// ```no_run
 /// # use rustls::ClientConfig;
-/// # use rustls::crypto::Ring;
+/// # use rustls::crypto::ring::Ring;
 /// # let root_certs = rustls::RootCertStore::empty();
 /// # let certs = vec![];
 /// # let private_key = rustls::PrivateKey(vec![]);
@@ -70,7 +70,7 @@ use std::marker::PhantomData;
 ///
 /// ```
 /// # use rustls::ClientConfig;
-/// # use rustls::crypto::Ring;
+/// # use rustls::crypto::ring::Ring;
 /// # let root_certs = rustls::RootCertStore::empty();
 /// ClientConfig::<Ring>::builder()
 ///     .with_safe_defaults()
