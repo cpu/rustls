@@ -195,8 +195,7 @@ pub(super) fn initial_key_share(
             config
                 .kx_groups
                 .iter()
-                .find(|supported_group| supported_group.name == *hint_group)
-                .is_some()
+                .any(|supported_group| supported_group.name == *hint_group)
         })
         .unwrap_or(
             config

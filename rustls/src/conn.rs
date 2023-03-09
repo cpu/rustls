@@ -1,3 +1,10 @@
+#[cfg(feature = "quic")]
+use std::collections::VecDeque;
+use std::fmt::Debug;
+use std::io;
+use std::mem;
+use std::ops::{Deref, DerefMut};
+
 use crate::enums::ProtocolVersion;
 use crate::error::{Error, InvalidMessage, PeerMisbehaved};
 use crate::key;
@@ -22,13 +29,6 @@ use crate::suites::{ExtractedSecrets, PartiallyExtractedSecrets};
 #[cfg(feature = "tls12")]
 use crate::tls12::ConnectionSecrets;
 use crate::vecbuf::ChunkVecBuffer;
-#[cfg(feature = "quic")]
-use std::collections::VecDeque;
-
-use std::fmt::Debug;
-use std::io;
-use std::mem;
-use std::ops::{Deref, DerefMut};
 
 /// A client or server connection.
 #[derive(Debug)]
@@ -1410,7 +1410,7 @@ impl Quic {
 }
 
 /// Side of the connection.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
     /// A client initiates the connection.
     Client,

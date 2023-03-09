@@ -12,7 +12,7 @@ pub struct Ring;
 impl CryptoProvider for Ring {
     fn ticket_generator() -> Result<Box<dyn ProducesTickets>, GetRandomFailed> {
         let mut key = [0u8; 32];
-        Ring::fill_random(&mut key)?;
+        Self::fill_random(&mut key)?;
 
         let alg = &aead::CHACHA20_POLY1305;
         let key = aead::UnboundKey::new(alg, &key).unwrap();

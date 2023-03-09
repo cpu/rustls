@@ -1,3 +1,10 @@
+use std::error::Error as StdError;
+use std::marker::PhantomData;
+use std::net::IpAddr;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+use std::{fmt, io, mem};
+
 use crate::builder::{ConfigBuilder, WantsCipherSuites};
 use crate::conn::{CommonState, ConnectionCommon, Protocol, Side};
 use crate::crypto::CryptoProvider;
@@ -6,12 +13,13 @@ use crate::error::Error;
 use crate::kx::SupportedKxGroup;
 #[cfg(feature = "logging")]
 use crate::log::trace;
-
 #[cfg(feature = "quic")]
 use crate::msgs::enums::AlertDescription;
 use crate::msgs::enums::NamedGroup;
 use crate::msgs::handshake::ClientExtension;
 use crate::msgs::persist;
+#[cfg(feature = "quic")]
+use crate::quic;
 use crate::sign;
 use crate::suites::SupportedCipherSuite;
 use crate::verify;
@@ -21,15 +29,6 @@ use crate::ExtractedSecrets;
 use crate::KeyLog;
 
 use super::hs;
-#[cfg(feature = "quic")]
-use crate::quic;
-
-use std::error::Error as StdError;
-use std::marker::PhantomData;
-use std::net::IpAddr;
-use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
-use std::{fmt, io, mem};
 
 /// A trait for the ability to store client session data, so that sessions
 /// can be resumed in future connections.
@@ -205,14 +204,14 @@ impl<C> Clone for ClientConfig<C> {
             cipher_suites: self.cipher_suites.clone(),
             kx_groups: self.kx_groups.clone(),
             alpn_protocols: self.alpn_protocols.clone(),
-            session_storage: self.session_storage.clone(),
+            session_storage: Arc::clone(&self.session_storage),
             max_fragment_size: self.max_fragment_size,
-            client_auth_cert_resolver: self.client_auth_cert_resolver.clone(),
+            client_auth_cert_resolver: Arc::clone(&self.client_auth_cert_resolver),
             enable_tickets: self.enable_tickets,
             versions: self.versions,
             enable_sni: self.enable_sni,
-            verifier: self.verifier.clone(),
-            key_log: self.key_log.clone(),
+            verifier: Arc::clone(&self.verifier),
+            key_log: Arc::clone(&self.key_log),
             #[cfg(feature = "secret_extraction")]
             enable_secret_extraction: self.enable_secret_extraction,
             enable_early_data: self.enable_early_data,

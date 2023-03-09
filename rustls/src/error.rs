@@ -1,14 +1,14 @@
+use std::error::Error as StdError;
+use std::fmt;
+use std::sync::Arc;
+use std::time::SystemTimeError;
+
 use crate::msgs::enums::{
     AlertDescription, CertificateStatusType, ContentType, ECCurveType, HandshakeType,
     KeyUpdateRequest,
 };
 use crate::msgs::handshake::KeyExchangeAlgorithm;
 use crate::rand;
-
-use std::error::Error as StdError;
-use std::fmt;
-use std::sync::Arc;
-use std::time::SystemTimeError;
 
 /// rustls reports protocol errors using this type.
 #[derive(Debug, Clone)]
@@ -151,7 +151,7 @@ impl From<InvalidMessage> for Error {
 
 #[non_exhaustive]
 #[allow(missing_docs)]
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Eq)]
 /// The set of cases where we failed to make a connection because we thought
 /// the peer was misbehaving.
 ///

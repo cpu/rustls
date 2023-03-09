@@ -1,3 +1,8 @@
+use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+use std::{fmt, io};
+
 use crate::builder::{ConfigBuilder, WantsCipherSuites};
 use crate::conn::{CommonState, ConnectionCommon, Side, State};
 use crate::crypto::CryptoProvider;
@@ -22,11 +27,6 @@ use crate::KeyLog;
 use crate::{conn::Protocol, quic};
 
 use super::hs;
-
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
-use std::{fmt, io};
 
 /// A trait for the ability to store server session data.
 ///
@@ -309,13 +309,13 @@ impl<C> Clone for ServerConfig<C> {
             kx_groups: self.kx_groups.clone(),
             ignore_client_order: self.ignore_client_order,
             max_fragment_size: self.max_fragment_size,
-            session_storage: self.session_storage.clone(),
-            ticketer: self.ticketer.clone(),
-            cert_resolver: self.cert_resolver.clone(),
+            session_storage: Arc::clone(&self.session_storage),
+            ticketer: Arc::clone(&self.ticketer),
+            cert_resolver: Arc::clone(&self.cert_resolver),
             alpn_protocols: self.alpn_protocols.clone(),
-            versions: self.versions.clone(),
-            verifier: self.verifier.clone(),
-            key_log: self.key_log.clone(),
+            versions: self.versions,
+            verifier: Arc::clone(&self.verifier),
+            key_log: Arc::clone(&self.key_log),
             #[cfg(feature = "secret_extraction")]
             enable_secret_extraction: self.enable_secret_extraction,
             max_early_data_size: self.max_early_data_size,
