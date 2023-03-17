@@ -1,10 +1,9 @@
 use crate::check::{inappropriate_handshake_message, inappropriate_message};
 use crate::conn::{self, CommonState, ConnectionRandoms, Side, State};
-use crate::crypto::CryptoProvider;
+use crate::crypto::{CryptoProvider, KeyExchangeError};
 use crate::enums::ProtocolVersion;
 use crate::error::{Error, InvalidMessage, PeerMisbehaved};
 use crate::hash_hs::HandshakeHash;
-use crate::kx::KeyExchangeError;
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace, warn};
 use crate::msgs::base::{Payload, PayloadU8};
