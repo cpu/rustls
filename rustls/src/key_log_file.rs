@@ -7,6 +7,8 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
+use zeroize::Zeroize;
+
 #[cfg(feature = "logging")]
 use crate::log::warn;
 use crate::KeyLog;
@@ -67,7 +69,15 @@ impl KeyLogFileInner {
             write!(self.buf, "{:02x}", b)?;
         }
         writeln!(self.buf)?;
-        file.write_all(&self.buf)
+        file.write_all(&self.buf)?;
+        self.buf.truncate(0);
+        Ok(())
+    }
+}
+
+impl Drop for KeyLogFileInner {
+    fn drop(&mut self) {
+        self.buf.zeroize();
     }
 }
 
