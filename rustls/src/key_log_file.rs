@@ -1,7 +1,3 @@
-#[cfg(feature = "logging")]
-use crate::log::warn;
-use crate::KeyLog;
-
 use alloc::string::String;
 use alloc::vec::Vec;
 use std::env;
@@ -10,6 +6,10 @@ use std::io;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
+
+#[cfg(feature = "logging")]
+use crate::log::warn;
+use crate::KeyLog;
 
 // Internal mutable state for KeyLogFile
 struct KeyLogFileInner {
