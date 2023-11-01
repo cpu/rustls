@@ -674,6 +674,8 @@ fn main() {
 
     let mut tlsserv = TlsServer::new(listener, mode, config);
 
+    println!("Test!");
+
     let mut events = mio::Events::with_capacity(256);
     loop {
         poll.poll(&mut events, None).unwrap();
