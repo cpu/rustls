@@ -366,7 +366,10 @@ impl<Data: SideData> ConnectionCommon<Data> {
             &mut self.deframer_buffer,
         )?;
         self.core
-            .process_new_packets(&mut self.deframer_buffer, &mut self.sendable_plaintext)?;
+            .deframe_and_process_new_packets(
+                &mut self.deframer_buffer,
+                &mut self.sendable_plaintext,
+            )?;
         Ok(())
     }
 

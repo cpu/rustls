@@ -475,7 +475,7 @@ impl<Data> ConnectionCommon<Data> {
         let mut deframer_buffer = self.deframer_buffer.borrow();
         let res = self
             .core
-            .deframe(None, &mut deframer_buffer)
+            .deframe(&mut deframer_buffer)
             .map(|opt| opt.map(|pm| Message::try_from(pm).map(|m| m.into_owned())));
         let discard = deframer_buffer.pending_discard();
         self.deframer_buffer.discard(discard);
@@ -512,7 +512,10 @@ impl<Data> ConnectionCommon<Data> {
     #[inline]
     pub fn process_new_packets(&mut self) -> Result<IoState, Error> {
         self.core
-            .process_new_packets(&mut self.deframer_buffer, &mut self.sendable_plaintext)
+            .deframe_and_process_new_packets(
+                &mut self.deframer_buffer,
+                &mut self.sendable_plaintext,
+            )
     }
 
     /// Read TLS content from `rd` into the internal buffer.
@@ -723,11 +726,11 @@ impl<Data> ConnectionCore<Data> {
         }
     }
 
-    pub(crate) fn process_new_packets(
+    pub(crate) fn process_new_packets<'b>(
         &mut self,
-        deframer_buffer: &mut DeframerVecBuffer,
+        messages: impl Iterator<Item = BorrowedPlainMessage<'b>>,
         sendable_plaintext: &mut ChunkVecBuffer,
-    ) -> Result<IoState, Error> {
+    ) -> Result<(), Error> {
         let mut state = match mem::replace(&mut self.state, Err(Error::HandshakeNotComplete)) {
             Ok(state) => state,
             Err(e) => {
@@ -736,12 +739,33 @@ impl<Data> ConnectionCore<Data> {
             }
         };
 
+        for msg in messages {
+            match self.process_msg(msg, state, Some(sendable_plaintext)) {
+                Ok(new) => state = new,
+                Err(e) => {
+                    self.state = Err(e.clone());
+                    return Err(e);
+                }
+            }
+        }
+
+        self.state = Ok(state);
+        Ok(())
+    }
+
+    pub(crate) fn deframe_and_process_new_packets(
+        &mut self,
+        deframer_buffer: &mut DeframerVecBuffer,
+        sendable_plaintext: &mut ChunkVecBuffer,
+    ) -> Result<IoState, Error> {
+        self.fuse_state_error()?;
+
         let mut discard = 0;
         loop {
             let mut borrowed_buffer = deframer_buffer.borrow();
             borrowed_buffer.queue_discard(discard);
 
-            let res = self.deframe(Some(&*state), &mut borrowed_buffer);
+            let res = self.deframe(&mut borrowed_buffer);
             discard = borrowed_buffer.pending_discard();
 
             let opt_msg = match res {
@@ -758,10 +782,9 @@ impl<Data> ConnectionCore<Data> {
                 None => break,
             };
 
-            match self.process_msg(msg, state, Some(sendable_plaintext)) {
-                Ok(new) => state = new,
+            match self.process_new_packets([msg].into_iter(), sendable_plaintext) {
+                Ok(()) => {}
                 Err(e) => {
-                    self.state = Err(e.clone());
                     deframer_buffer.discard(discard);
                     return Err(e);
                 }
@@ -769,14 +792,19 @@ impl<Data> ConnectionCore<Data> {
         }
 
         deframer_buffer.discard(discard);
-        self.state = Ok(state);
         Ok(self.common_state.current_io_state())
+    }
+
+    pub(crate) fn fuse_state_error(&self) -> Result<(), Error> {
+        match &self.state {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.clone()),
+        }
     }
 
     /// Pull a message out of the deframer and send any messages that need to be sent as a result.
     fn deframe<'b>(
         &mut self,
-        state: Option<&dyn State<Data>>,
         deframer_buffer: &mut DeframerSliceBuffer<'b>,
     ) -> Result<Option<BorrowedPlainMessage<'b>>, Error> {
         match self.message_deframer.pop(
@@ -820,7 +848,7 @@ impl<Data> ConnectionCore<Data> {
                 .common_state
                 .send_fatal_alert(AlertDescription::RecordOverflow, err)),
             Err(err @ Error::DecryptError) => {
-                if let Some(state) = state {
+                if let Ok(state) = &self.state {
                     state.handle_decrypt_error();
                 }
                 Err(self

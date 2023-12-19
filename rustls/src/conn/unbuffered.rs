@@ -75,7 +75,7 @@ impl<Data> UnbufferedConnectionCommon<Data> {
                 );
             }
 
-            let deframer_output = match self.core.deframe(None, &mut buffer) {
+            let deframer_output = match self.core.deframe(&mut buffer) {
                 Err(err) => {
                     return UnbufferedStatus {
                         discard: buffer.pending_discard(),
