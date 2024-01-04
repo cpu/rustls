@@ -13,8 +13,9 @@ use crate::record_layer::{Decrypted, RecordLayer};
 
 /// This deframer works to reconstruct TLS messages from a stream of arbitrary-sized reads.
 ///
-/// It buffers incoming data into a `Vec` through `read()`, and returns messages through `pop()`.
-/// QUIC connections will call `push()` to append handshake payload data directly.
+/// It buffers incoming data into the supplied buffer through `read()`, and returns messages
+/// through `pop()`. QUIC connections will call `push()` to append handshake payload data
+/// directly.
 #[derive(Default)]
 pub struct MessageDeframer {
     /// Set if the peer is not talking TLS, but some other
@@ -48,6 +49,8 @@ impl MessageDeframer {
         // For records that decrypt as `Handshake`, we keep the current state of the joined
         // handshake message payload in `self.joining_hs`, appending to it as we see records.
         let expected_len = loop {
+            // Fragmented handshake messages are collected (in plaintext) at the start of
+            // `buffer`, and the usage for this purpose is tracked by `joining_hs`.
             let start = match &self.joining_hs {
                 Some(meta) => {
                     match meta.expected_len {
@@ -62,9 +65,10 @@ impl MessageDeframer {
                 None => 0,
             };
 
-            // Does our `buf` contain a full message?  It does if it is big enough to
-            // contain a header, and that header has a length which falls within `buf`.
-            // If so, deframe it and place the message onto the frames output queue.
+            // The new data to parse exists starting at `start` in `buffer`.
+            // Does it contain a full message?  It does if it is big enough to
+            // contain a header, and that header has a length which falls within the
+            // buffer.
             let mut rd = codec::ReaderMut::init(buffer.filled_get_mut(start..));
             let m = match BorrowedOpaqueMessage::read(&mut rd) {
                 Ok(m) => m,
@@ -212,7 +216,7 @@ impl MessageDeframer {
             // `expected_len` to match the state of that remaining payload.
             meta.payload.start += expected_len;
             meta.expected_len =
-                payload_size(buffer.filled_get(meta.payload.start..meta.payload.end))?;
+                handshake_payload_size(buffer.filled_get(meta.payload.start..meta.payload.end))?;
         } else {
             // Otherwise, we've yielded the last handshake payload in the buffer, so we can
             // discard all of the bytes that we're previously buffered as handshake data.
@@ -266,7 +270,7 @@ impl MessageDeframer {
 
     /// Write the handshake message contents into the buffer and update the metadata.
     ///
-    /// Returns true if a complete message is found.
+    /// Returns [`HandshakePayloadState::Complete`] if a complete message is found.
     fn append_hs<'a, P: AppendPayload<'a>, B: DeframerBuffer<'a, P>>(
         &mut self,
         version: ProtocolVersion,
@@ -287,8 +291,9 @@ impl MessageDeframer {
 
                 // If we haven't parsed the payload size yet, try to do so now.
                 if meta.expected_len.is_none() {
-                    meta.expected_len =
-                        payload_size(buffer.filled_get(meta.payload.start..meta.payload.end))?;
+                    meta.expected_len = handshake_payload_size(
+                        buffer.filled_get(meta.payload.start..meta.payload.end),
+                    )?;
                 }
 
                 meta
@@ -323,7 +328,6 @@ impl MessageDeframer {
     }
 
     /// Read some bytes from `rd`, and add them to our internal buffer.
-    #[allow(clippy::comparison_chain)]
     pub fn read(
         &mut self,
         rd: &mut dyn io::Read,
@@ -364,7 +368,7 @@ impl<'a> AppendPayload<'a> for ExternalPayload<'a> {
     }
 
     fn size<B: DeframerBuffer<'a, Self>>(&self, _: &B) -> Result<Option<usize>, Error> {
-        payload_size(self.0)
+        handshake_payload_size(self.0)
     }
 }
 
@@ -381,7 +385,7 @@ impl<'a> AppendPayload<'a> for InternalPayload {
         &self,
         internal_buffer: &B,
     ) -> Result<Option<usize>, Error> {
-        payload_size(internal_buffer.filled_get(self.0.clone()))
+        handshake_payload_size(internal_buffer.filled_get(self.0.clone()))
     }
 }
 
@@ -666,17 +670,17 @@ struct HandshakePayloadMeta {
 /// Returns `Err` if the advertised length is larger than what we want to accept
 /// (`MAX_HANDSHAKE_SIZE`), `Ok(None)` if the buffer is too small to contain a complete header,
 /// and `Ok(Some(len))` otherwise.
-fn payload_size(buf: &[u8]) -> Result<Option<usize>, Error> {
-    if buf.len() < HEADER_SIZE {
+fn handshake_payload_size(buf: &[u8]) -> Result<Option<usize>, Error> {
+    if buf.len() < HANDSHAKE_HEADER_SIZE {
         return Ok(None);
     }
 
-    let (header, _) = buf.split_at(HEADER_SIZE);
+    let (header, _) = buf.split_at(HANDSHAKE_HEADER_SIZE);
     match codec::u24::read_bytes(&header[1..]) {
         Ok(len) if len.0 > MAX_HANDSHAKE_SIZE => Err(Error::InvalidMessage(
             InvalidMessage::HandshakePayloadTooLarge,
         )),
-        Ok(len) => Ok(Some(HEADER_SIZE + usize::from(len))),
+        Ok(len) => Ok(Some(HANDSHAKE_HEADER_SIZE + usize::from(len))),
         _ => Ok(None),
     }
 }
@@ -689,7 +693,7 @@ pub struct Deframed<'a> {
     pub message: BorrowedPlainMessage<'a>,
 }
 
-const HEADER_SIZE: usize = 1 + 3;
+const HANDSHAKE_HEADER_SIZE: usize = 1 + 3;
 
 /// TLS allows for handshake messages of up to 16MB.  We
 /// restrict that to 64KB to limit potential for denial-of-
