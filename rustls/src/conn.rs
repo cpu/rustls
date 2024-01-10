@@ -469,8 +469,8 @@ impl<Data> ConnectionCommon<Data> {
 
     /// Extract the first handshake message.
     ///
-    /// This is a shortcut to the `process_new_packets()` -> `process_msg()` ->
-    /// `process_handshake_messages()` path, specialized for the first handshake message.
+    /// This is a shortcut to the `process_new_packets()` -> `process_msg()` path,
+    /// specialized for the first handshake message.
     pub(crate) fn first_handshake_message(&mut self) -> Result<Option<Message<'static>>, Error> {
         let mut deframer_buffer = self.deframer_buffer.borrow();
         let res = self
