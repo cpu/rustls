@@ -8,7 +8,7 @@ use super::message::{BorrowedOpaqueMessage, BorrowedPlainMessage};
 use crate::enums::{ContentType, ProtocolVersion};
 use crate::error::{Error, InvalidMessage, PeerMisbehaved};
 use crate::msgs::codec;
-use crate::msgs::message::{MessageError, OpaqueMessage};
+use crate::msgs::message::{BorrowedPlainPayload, MessageError, OpaqueMessage};
 use crate::record_layer::{Decrypted, RecordLayer};
 
 /// This deframer works to reconstruct TLS messages from a stream of arbitrary-sized reads.
@@ -119,7 +119,7 @@ impl MessageDeframer {
                 let message = BorrowedPlainMessage {
                     typ,
                     version,
-                    payload: buffer.take(raw_payload),
+                    payload: BorrowedPlainPayload::new_single(buffer.take(raw_payload)),
                 };
                 return Ok(Some(Deframed {
                     want_close_before_decrypt: false,
@@ -174,7 +174,7 @@ impl MessageDeframer {
                 let message = BorrowedPlainMessage {
                     typ,
                     version,
-                    payload: buffer.take(raw_payload),
+                    payload: BorrowedPlainPayload::new_single(buffer.take(raw_payload)),
                 };
                 return Ok(Some(Deframed {
                     want_close_before_decrypt: false,
@@ -224,7 +224,7 @@ impl MessageDeframer {
         let message = BorrowedPlainMessage {
             typ,
             version,
-            payload: buffer.take(raw_payload),
+            payload: BorrowedPlainPayload::new_single(buffer.take(raw_payload)),
         };
 
         Ok(Some(Deframed {

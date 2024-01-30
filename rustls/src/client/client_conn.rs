@@ -32,6 +32,7 @@ use core::ops::{Deref, DerefMut};
 use std::error::Error as StdError;
 use std::io;
 
+use crate::msgs::message::BorrowedPlainPayload;
 #[cfg(doc)]
 use crate::{crypto, DistinguishedName};
 
@@ -766,7 +767,10 @@ impl MayEncryptEarlyData<'_> {
         self.conn
             .core
             .common_state
-            .write_plaintext(&early_data[..allowed], outgoing_tls)
+            .write_plaintext(
+                BorrowedPlainPayload::new_single(&early_data[..allowed]),
+                outgoing_tls,
+            )
             .map_err(|e| e.into())
     }
 }

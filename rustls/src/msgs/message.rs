@@ -204,7 +204,7 @@ impl<'a> BorrowedOpaqueMessage<'a> {
         BorrowedPlainMessage {
             typ: self.typ,
             version: self.version,
-            payload: self.payload.into_inner(),
+            payload: BorrowedPlainPayload::new_single(self.payload.into_inner()),
         }
     }
 
@@ -342,7 +342,7 @@ impl PlainMessage {
         BorrowedPlainMessage {
             version: self.version,
             typ: self.typ,
-            payload: self.payload.bytes(),
+            payload: BorrowedPlainPayload::new_single(self.payload.bytes()),
         }
     }
 }
@@ -412,7 +412,7 @@ impl<'a> TryFrom<BorrowedPlainMessage<'a>> for Message<'a> {
     fn try_from(plain: BorrowedPlainMessage<'a>) -> Result<Self, Self::Error> {
         Ok(Self {
             version: plain.version,
-            payload: MessagePayload::new(plain.typ, plain.version, plain.payload)?,
+            payload: MessagePayload::new(plain.typ, plain.version, &plain.payload.to_vec())?,
         })
     }
 }
@@ -429,7 +429,7 @@ impl<'a> TryFrom<BorrowedPlainMessage<'a>> for Message<'a> {
 pub struct BorrowedPlainMessage<'a> {
     pub typ: ContentType,
     pub version: ProtocolVersion,
-    pub payload: &'a [u8],
+    pub payload: BorrowedPlainPayload<'a>,
 }
 
 impl<'a> BorrowedPlainMessage<'a> {
@@ -459,6 +459,149 @@ impl<'a> BorrowedPlainMessage<'a> {
     }
 }
 
+#[derive(Debug, Clone)]
+/// A collection of borrowed plaintext slices
+pub enum BorrowedPlainPayload<'a> {
+    Empty,
+    /// A single byte slice. This allows only one redirection instead of several.
+    Single(&'a [u8]),
+    /// A collection of chunks (byte slices)
+    /// and inclusive-exclusive cursors to single out a slice of bytes.
+    /// [BorrowedPayload] assumes three invariants:
+    /// - at least two chunks
+    /// - a start cursor pointing into the first chunk
+    /// - an end cursor pointing into the last one
+    Multiple {
+        chunks: &'a [&'a [u8]],
+        start: usize,
+        end: usize,
+    },
+}
+
+impl<'a> BorrowedPlainPayload<'a> {
+    /// Create a payload with a single byte slice
+    pub fn new_single(payload: &'a [u8]) -> Self {
+        Self::Single(payload)
+    }
+
+    /// create a payload from a slice of byte slices.
+    /// The cursors are added by default: start = 0, end = length
+    pub fn new(chunks: &'a [&'a [u8]]) -> Self {
+        Self::new_with_cursors(
+            chunks,
+            0,
+            chunks
+                .iter()
+                .map(|chunk| chunk.len())
+                .sum(),
+        )
+    }
+
+    /// Append all bytes to a vector
+    pub fn copy_to_vec(&self, vec: &mut Vec<u8>) {
+        match self {
+            Self::Empty => {}
+            Self::Single(chunk) => vec.extend_from_slice(chunk),
+            Self::Multiple { chunks, start, end } => {
+                let mut size = 0usize;
+                for (i, chunk) in chunks.iter().enumerate() {
+                    if i == 0 {
+                        vec.extend_from_slice(&chunk[*start..]);
+                        size += chunk.len();
+                    } else if i == chunks.len() - 1 {
+                        vec.extend_from_slice(&chunk[..(end - size)]);
+                    } else {
+                        vec.extend_from_slice(chunk);
+                        size += chunk.len();
+                    }
+                }
+            }
+        }
+    }
+
+    /// split self in two, around an index.
+    /// Works similarly to `split_at` in the core library.
+    pub fn split_at(&self, mid: usize) -> (Self, Self) {
+        match self {
+            Self::Empty => (Self::Empty, Self::Empty),
+            Self::Single(chunk) => {
+                if chunk.len() < mid {
+                    return (self.clone(), Self::Empty);
+                }
+                (Self::Single(&chunk[..mid]), Self::Single(&chunk[mid..]))
+            }
+            Self::Multiple { chunks, start, end } => {
+                let mut size = 0usize;
+                for (i, chunk) in chunks.iter().enumerate() {
+                    if size + chunk.len() >= (mid + start) {
+                        return (
+                            Self::new_with_cursors(&chunks[..=i], *start, start + mid),
+                            Self::new_with_cursors(&chunks[i..], mid + start - size, end - size),
+                        );
+                    }
+                    size += chunk.len();
+                }
+                (self.clone(), Self::Empty)
+            }
+        }
+    }
+
+    /// Returns the length of the borrowed payload
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::Single(chunk) => chunk.len(),
+            Self::Multiple { start, end, .. } => end - start,
+        }
+    }
+
+    /// Flatten the slice of byte slices to an owned vector of bytes
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut vec = Vec::with_capacity(self.len());
+        self.copy_to_vec(&mut vec);
+        vec
+    }
+
+    /// Returns true if the payload is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns true if the payload is a CCS message
+    pub fn is_ccs(&self) -> bool {
+        match self {
+            Self::Single(chunk) => chunk.len() == 1 && chunk[0] == 1,
+            _ => false,
+        }
+    }
+
+    /// Copy so many bytes from the payload
+    pub fn take_up_to(&self, limit: usize) -> Vec<u8> {
+        self.split_at(limit).0.to_vec()
+    }
+
+    /// Borrow so many bytes from the payload
+    pub fn borrow_up_to(&self, limit: usize) -> Self {
+        self.split_at(limit).0
+    }
+
+    fn new_with_cursors(chunks: &'a [&'a [u8]], start: usize, end: usize) -> Self {
+        if end - start == 0 {
+            return Self::Empty;
+        }
+        if chunks.len() == 1 {
+            return Self::Single(&chunks[0][start..end]);
+        }
+        Self::Multiple { chunks, start, end }
+    }
+}
+
+impl Into<Vec<u8>> for BorrowedPlainPayload<'_> {
+    fn into(self) -> Vec<u8> {
+        self.to_vec()
+    }
+}
+
 #[derive(Debug)]
 pub enum MessageError {
     TooShortForHeader,
@@ -467,4 +610,101 @@ pub enum MessageError {
     MessageTooLarge,
     InvalidContentType,
     UnknownProtocolVersion,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{println, vec};
+
+    use super::*;
+
+    #[test]
+    fn split_at_with_four_slices() {
+        let payload_owner: Vec<&[u8]> =
+            vec![&[0, 1, 2, 3], &[4, 5], &[6, 7, 8], &[9, 10, 11, 12, 13]];
+        let borrowed_payload = BorrowedPlainPayload::new(&payload_owner);
+        let (before, after) = borrowed_payload.split_at(12);
+        println!("before:{:?}\nafter:{:?}", before, after);
+
+        assert_eq!(&before.to_vec(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(after.to_vec(), &[12, 13]);
+    }
+
+    #[test]
+    fn split_out_of_bounds() {
+        let payload_owner: Vec<&[u8]> =
+            vec![&[0, 1, 2, 3], &[4, 5], &[6, 7, 8], &[9, 10, 11, 12, 13]];
+        let borrowed_payload = BorrowedPlainPayload::new(&payload_owner);
+        let (before, after) = borrowed_payload.split_at(17);
+        println!("before:{:?}\nafter:{:?}", before, after);
+
+        assert_eq!(
+            &before.to_vec(),
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        );
+        assert_eq!(after.to_vec(), &[]);
+
+        let empty_payload = BorrowedPlainPayload::Empty;
+        let (before, after) = empty_payload.split_at(17);
+        assert!(before.is_empty());
+        assert!(after.is_empty());
+    }
+
+    #[test]
+    fn split_several_times() {
+        let payload_owner: Vec<&[u8]> =
+            vec![&[0, 1, 2, 3], &[4, 5], &[6, 7, 8], &[9, 10, 11, 12, 13]];
+        let borrowed_payload = BorrowedPlainPayload::new_with_cursors(&payload_owner, 0, 14);
+        let (before, after) = borrowed_payload.split_at(3);
+        println!("before:{:?}\nafter:{:?}", before, after);
+
+        assert_eq!(&before.to_vec(), &[0, 1, 2]);
+        assert_eq!(after.to_vec(), &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+
+        let (before, after) = borrowed_payload.split_at(8);
+        println!("before:{:?}\nafter:{:?}", before, after);
+
+        assert_eq!(&before.to_vec(), &[0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(after.to_vec(), &[8, 9, 10, 11, 12, 13]);
+
+        let (before, after) = borrowed_payload.split_at(12);
+        assert_eq!(&before.to_vec(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(after.to_vec(), &[12, 13]);
+    }
+
+    #[test]
+    fn exhaustive_splitting() {
+        let owner: Vec<u8> = (0..127).collect();
+        let slices = (0..7)
+            .map(|i| &owner[((1 << i) - 1)..((1 << (i + 1)) - 1)])
+            .collect::<Vec<_>>();
+        let payload = BorrowedPlainPayload::new(&slices);
+
+        assert_eq!(payload.to_vec(), owner);
+        println!("{:#?}", payload);
+
+        for start in 0..128 {
+            for end in start..128 {
+                for mid in 0..(end - start) {
+                    let witness = owner[start..end].split_at(mid);
+                    let split_payload = payload
+                        .split_at(end)
+                        .0
+                        .split_at(start)
+                        .1
+                        .split_at(mid);
+                    assert_eq!(
+                        witness.0,
+                        split_payload.0.to_vec(),
+                        "start: {start}, mid:{mid}, end:{end}"
+                    );
+                    assert_eq!(
+                        witness.1,
+                        split_payload.1.to_vec(),
+                        "start: {start}, mid:{mid}, end:{end}"
+                    );
+                }
+            }
+        }
+    }
 }
