@@ -157,7 +157,7 @@ pub(super) fn start_handshake(
             Some(())
         });
 
-    Ok(emit_client_hello_for_retry(
+    emit_client_hello_for_retry(
         transcript_buffer,
         None,
         key_share,
@@ -175,7 +175,7 @@ pub(super) fn start_handshake(
             server_name,
         },
         cx,
-    ))
+    )
 }
 
 struct ExpectServerHello {
@@ -211,7 +211,7 @@ fn emit_client_hello_for_retry(
     suite: Option<SupportedCipherSuite>,
     mut input: ClientHelloInput,
     cx: &mut ClientContext<'_>,
-) -> NextState<'static> {
+) -> NextStateOrError<'static> {
     let config = &input.config;
     let support_tls12 = config.supports_version(ProtocolVersion::TLSv1_2) && !cx.common.is_quic();
     let support_tls13 = config.supports_version(ProtocolVersion::TLSv1_3);
@@ -417,11 +417,11 @@ fn emit_client_hello_for_retry(
         suite,
     };
 
-    if support_tls13 && retryreq.is_none() {
+    Ok(if support_tls13 && retryreq.is_none() {
         Box::new(ExpectServerHelloOrHelloRetryRequest { next, extra_exts })
     } else {
         Box::new(next)
-    }
+    })
 }
 
 /// Prepare resumption with the session state retrieved from storage.
@@ -901,7 +901,7 @@ impl ExpectServerHelloOrHelloRetryRequest {
             _ => offered_key_share,
         };
 
-        Ok(emit_client_hello_for_retry(
+        emit_client_hello_for_retry(
             transcript_buffer,
             Some(hrr),
             Some(key_share),
@@ -909,7 +909,7 @@ impl ExpectServerHelloOrHelloRetryRequest {
             Some(cs),
             self.next.input,
             cx,
-        ))
+        )
     }
 }
 
