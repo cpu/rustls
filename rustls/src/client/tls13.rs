@@ -10,6 +10,7 @@ use super::client_conn::ClientConnectionData;
 use super::hs::ClientContext;
 use crate::check::inappropriate_handshake_message;
 use crate::client::common::{ClientAuthDetails, ClientHelloDetails, ServerCertDetails};
+use crate::client::ech::EchState;
 use crate::client::{hs, ClientConfig, ClientSessionStore};
 use crate::common_state::{CommonState, HandshakeKind, Protocol, Side, State};
 use crate::conn::ConnectionRandoms;
@@ -72,6 +73,8 @@ pub(super) fn handle_server_hello(
     hello: ClientHelloDetails,
     our_key_share: Box<dyn ActiveKeyExchange>,
     mut sent_tls13_fake_ccs: bool,
+    ech_state: Option<EchState>,
+    server_hello_msg: &Message,
 ) -> hs::NextStateOrError<'static> {
     validate_server_hello(cx.common, server_hello)?;
 
@@ -145,6 +148,10 @@ pub(super) fn handle_server_hello(
     };
 
     let shared_secret = our_key_share.complete(&their_key_share.payload.0)?;
+
+    // TODO(@cpu): Handle confirmation of ECH.
+    let _ = ech_state;
+    let _ = server_hello_msg;
 
     let key_schedule = key_schedule_pre_handshake.into_handshake(shared_secret);
 
