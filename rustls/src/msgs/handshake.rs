@@ -1056,6 +1056,7 @@ pub(crate) enum HelloRetryExtension {
     KeyShare(NamedGroup),
     Cookie(PayloadU16),
     SupportedVersions(ProtocolVersion),
+    EchHelloRetryRequest(Vec<u8>),
     Unknown(UnknownExtension),
 }
 
@@ -1065,6 +1066,7 @@ impl HelloRetryExtension {
             Self::KeyShare(_) => ExtensionType::KeyShare,
             Self::Cookie(_) => ExtensionType::Cookie,
             Self::SupportedVersions(_) => ExtensionType::SupportedVersions,
+            Self::EchHelloRetryRequest(_) => ExtensionType::EncryptedClientHello,
             Self::Unknown(ref r) => r.typ,
         }
     }
@@ -1079,6 +1081,9 @@ impl Codec<'_> for HelloRetryExtension {
             Self::KeyShare(ref r) => r.encode(nested.buf),
             Self::Cookie(ref r) => r.encode(nested.buf),
             Self::SupportedVersions(ref r) => r.encode(nested.buf),
+            Self::EchHelloRetryRequest(ref r) => {
+                nested.buf.extend_from_slice(r);
+            }
             Self::Unknown(ref r) => r.encode(nested.buf),
         }
     }
@@ -1094,6 +1099,7 @@ impl Codec<'_> for HelloRetryExtension {
             ExtensionType::SupportedVersions => {
                 Self::SupportedVersions(ProtocolVersion::read(&mut sub)?)
             }
+            ExtensionType::EncryptedClientHello => Self::EchHelloRetryRequest(sub.rest().to_vec()),
             _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
         };
 
@@ -1116,12 +1122,7 @@ pub struct HelloRetryRequest {
 
 impl Codec<'_> for HelloRetryRequest {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.legacy_version.encode(bytes);
-        HELLO_RETRY_REQUEST_RANDOM.encode(bytes);
-        self.session_id.encode(bytes);
-        self.cipher_suite.encode(bytes);
-        Compression::Null.encode(bytes);
-        self.extensions.encode(bytes);
+        self.payload_encode(bytes, Encoding::Standard)
     }
 
     fn read(r: &mut Reader) -> Result<Self, InvalidMessage> {
@@ -1158,6 +1159,7 @@ impl HelloRetryRequest {
             ext.ext_type() != ExtensionType::KeyShare
                 && ext.ext_type() != ExtensionType::SupportedVersions
                 && ext.ext_type() != ExtensionType::Cookie
+                && ext.ext_type() != ExtensionType::EncryptedClientHello
         })
     }
 
@@ -1188,6 +1190,48 @@ impl HelloRetryRequest {
         match *ext {
             HelloRetryExtension::SupportedVersions(ver) => Some(ver),
             _ => None,
+        }
+    }
+
+    pub(crate) fn ech(&self) -> Option<&Vec<u8>> {
+        let ext = self.find_extension(ExtensionType::EncryptedClientHello)?;
+        match *ext {
+            HelloRetryExtension::EchHelloRetryRequest(ref ech) => Some(ech),
+            _ => None,
+        }
+    }
+
+    fn payload_encode(&self, bytes: &mut Vec<u8>, purpose: Encoding) {
+        self.legacy_version.encode(bytes);
+        HELLO_RETRY_REQUEST_RANDOM.encode(bytes);
+        self.session_id.encode(bytes);
+        self.cipher_suite.encode(bytes);
+        Compression::Null.encode(bytes);
+
+        match purpose {
+            // Standard encoding encodes extensions as they appear.
+            Encoding::Standard => {
+                self.extensions.encode(bytes);
+            }
+            // For the purpose of ECH confirmation, the Encrypted Client Hello extension
+            // must have its payload replaced by 8 zero bytes.
+            //
+            // See draft-ietf-tls-esni-18 7.2.1:
+            // <https://datatracker.ietf.org/doc/html/draft-ietf-tls-esni-18#name-sending-helloretryrequest-2>
+            Encoding::EchConfirmation => {
+                let extensions = LengthPrefixedBuffer::new(ListLength::U16, bytes);
+                for ext in &self.extensions {
+                    match ext.ext_type() {
+                        ExtensionType::EncryptedClientHello => {
+                            HelloRetryExtension::EchHelloRetryRequest(vec![0u8; 8])
+                                .encode(extensions.buf);
+                        }
+                        _ => {
+                            ext.encode(extensions.buf);
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -2628,11 +2672,13 @@ impl<'a> HandshakeMessagePayload<'a> {
         let nested = LengthPrefixedBuffer::new(ListLength::U24 { max: usize::MAX }, bytes);
 
         match &self.payload {
-            // for Server Hello payloads we need to encode the payload differently
-            // based on the purpose of the encoding.
+            // for Server Hello and HelloRetryRequest payloads we need to encode the payload
+            // differently based on the purpose of the encoding.
             HandshakePayload::ServerHello(payload) => payload.payload_encode(nested.buf, encoding),
-            // TODO(@cpu): We will also need to handle HelloRetryRequests differently for HRR
-            //   ECH confirmation.
+            HandshakePayload::HelloRetryRequest(payload) => {
+                payload.payload_encode(nested.buf, encoding)
+            }
+
             // All other payload types are encoded the same regardless of purpose.
             _ => self.payload.encode(nested.buf),
         }

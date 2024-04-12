@@ -827,15 +827,10 @@ impl ExpectServerHelloOrHelloRetryRequest {
     }
 
     fn handle_hello_retry_request(
-        self,
+        mut self,
         cx: &mut ClientContext<'_>,
         m: Message,
     ) -> NextStateOrError<'static> {
-        // TODO(@cpu): Handle confirming ECH for HRR.
-        if self.next.ech_state.is_some() {
-            todo!("ECH confirmation handling for HRR");
-        }
-
         let hrr = require_handshake_msg!(
             m,
             HandshakeType::HelloRetryRequest,
@@ -953,9 +948,35 @@ impl ExpectServerHelloOrHelloRetryRequest {
             }
         };
 
+        // Or offers ECH related extensions when we didn't offer ECH.
+        if cx.data.ech_status == EchStatus::NotOffered && hrr.ech().is_some() {
+            return Err({
+                cx.common.send_fatal_alert(
+                    AlertDescription::UnsupportedExtension,
+                    PeerMisbehaved::IllegalHelloRetryRequestWithInvalidEch,
+                )
+            });
+        }
+
         // HRR selects the ciphersuite.
         cx.common.suite = Some(cs);
         cx.common.handshake_kind = Some(HandshakeKind::FullWithHelloRetryRequest);
+
+        // If we offered ECH, we need to confirm that the server accepted it.
+        match (self.next.ech_state.as_ref(), cs.tls13()) {
+            (Some(ech_state), Some(tls13_cs)) => {
+                if !ech_state.confirm_hrr_acceptance(hrr, tls13_cs, cx.common)? {
+                    // If the server did not confirm, then note the new ECH status but
+                    // continue the handshake. We will abort with an ECH required error
+                    // at the end.
+                    cx.data.ech_status = EchStatus::Rejected;
+                }
+            }
+            (Some(_), None) => {
+                unreachable!("ECH state should only be set when TLS 1.3 was negotiated")
+            }
+            _ => {}
+        };
 
         // This is the draft19 change where the transcript became a tree
         let transcript = self
@@ -964,6 +985,12 @@ impl ExpectServerHelloOrHelloRetryRequest {
             .start_hash(cs.hash_provider());
         let mut transcript_buffer = transcript.into_hrr_buffer();
         transcript_buffer.add_message(&m);
+
+        // If we offered ECH and the server accepted, we also need to update the separate
+        // ECH transcript with the hello retry request message.
+        if let Some(ech_state) = self.next.ech_state.as_mut() {
+            ech_state.transcript_hrr_update(cs.hash_provider(), &m);
+        }
 
         // Early data is not allowed after HelloRetryrequest
         if cx.data.early_data.is_enabled() {
@@ -995,7 +1022,7 @@ impl ExpectServerHelloOrHelloRetryRequest {
             Some(cs),
             self.next.input,
             cx,
-            None, // TODO(@cpu): handle ECH HRR
+            self.next.ech_state,
         )
     }
 }

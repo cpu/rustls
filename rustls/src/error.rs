@@ -195,6 +195,7 @@ pub enum PeerMisbehaved {
     IllegalHelloRetryRequestWithUnofferedNamedGroup,
     IllegalHelloRetryRequestWithUnsupportedVersion,
     IllegalHelloRetryRequestWithWrongSessionId,
+    IllegalHelloRetryRequestWithInvalidEch,
     IllegalMiddleboxChangeCipherSpec,
     IllegalTlsInnerPlaintext,
     IncorrectBinder,

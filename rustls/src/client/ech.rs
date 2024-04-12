@@ -24,12 +24,13 @@ use crate::msgs::handshake::{
 use crate::msgs::message::{Message, MessagePayload};
 use crate::msgs::persist;
 use crate::msgs::persist::Retrieved;
-use crate::tls13::key_schedule::KeyScheduleEarly;
-use crate::tls13::key_schedule::KeyScheduleHandshakeStart;
+use crate::tls13::key_schedule::{
+    server_ech_hrr_confirmation_secret, KeyScheduleEarly, KeyScheduleHandshakeStart,
+};
 use crate::CipherSuite::TLS_EMPTY_RENEGOTIATION_INFO_SCSV;
 use crate::{
     AlertDescription, CommonState, EncryptedClientHelloError, Error, HandshakeType,
-    PeerIncompatible, ProtocolVersion,
+    PeerIncompatible, PeerMisbehaved, ProtocolVersion, Tls13CipherSuite,
 };
 
 /// Configuration for performing encrypted client hello.
@@ -360,6 +361,74 @@ impl EchState {
         )
     }
 
+    pub(crate) fn confirm_hrr_acceptance(
+        &self,
+        hrr: &HelloRetryRequest,
+        cs: &Tls13CipherSuite,
+        common: &mut CommonState,
+    ) -> Result<bool, Error> {
+        // The client checks for the "encrypted_client_hello" extension.
+        let ech_conf = match hrr.ech() {
+            // If none is found, the server has implicitly rejected ECH.
+            None => return Ok(false),
+            // Otherwise, if it has a length other than 8, the client aborts the
+            // handshake with a "decode_error" alert.
+            Some(ech_conf) if ech_conf.len() != 8 => {
+                return Err({
+                    common.send_fatal_alert(
+                        AlertDescription::DecodeError,
+                        PeerMisbehaved::IllegalHelloRetryRequestWithInvalidEch,
+                    )
+                })
+            }
+            Some(ech_conf) => ech_conf,
+        };
+
+        // Otherwise the client computes hrr_accept_confirmation as described in Section
+        // 7.2.1
+        let confirmation_transcript = self.inner_hello_transcript.clone();
+        let mut confirmation_transcript =
+            confirmation_transcript.start_hash(cs.common.hash_provider);
+        confirmation_transcript.rollup_for_hrr();
+        confirmation_transcript.add_message(&Self::hello_retry_request_conf(hrr));
+
+        let derived = server_ech_hrr_confirmation_secret(
+            cs.hkdf_provider,
+            &self.inner_hello_random.0,
+            confirmation_transcript.current_hash(),
+        );
+
+        Ok(
+            match ConstantTimeEq::ct_eq(derived.as_ref(), ech_conf).into() {
+                true => {
+                    trace!("ECH accepted by server in hello retry request");
+                    true
+                }
+                false => {
+                    trace!("ECH rejected by server in hello retry request");
+                    false
+                }
+            },
+        )
+    }
+
+    /// Update the ECH context inner hello transcript based on a received hello retry request message.
+    ///
+    /// This will start the in-progress transcript using the given `hash`, convert it into an HRR
+    /// buffer, and then add the hello retry message `m`.
+    pub(crate) fn transcript_hrr_update(&mut self, hash: &'static dyn Hash, m: &Message) {
+        trace!("Updating ECH inner transcript for HRR");
+
+        let inner_transcript = self
+            .inner_hello_transcript
+            .clone()
+            .start_hash(hash);
+
+        let mut inner_transcript_buffer = inner_transcript.into_hrr_buffer();
+        inner_transcript_buffer.add_message(m);
+        self.inner_hello_transcript = inner_transcript_buffer;
+    }
+
     fn encode_inner_hello(
         &mut self,
         outer_hello: &ClientHelloPayload,
@@ -566,6 +635,13 @@ impl EchState {
         Self::ech_conf_message(HandshakeMessagePayload {
             typ: HandshakeType::ServerHello,
             payload: HandshakePayload::ServerHello(server_hello.clone()),
+        })
+    }
+
+    fn hello_retry_request_conf(retry_req: &HelloRetryRequest) -> Message {
+        Self::ech_conf_message(HandshakeMessagePayload {
+            typ: HandshakeType::HelloRetryRequest,
+            payload: HandshakePayload::HelloRetryRequest(retry_req.clone()),
         })
     }
 
