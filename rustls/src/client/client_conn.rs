@@ -9,6 +9,7 @@ use pki_types::{ServerName, UnixTime};
 use super::handy::NoClientSessionStorage;
 use super::hs;
 use crate::builder::ConfigBuilder;
+use crate::client::EchConfig;
 use crate::common_state::{CommonState, Protocol, Side};
 use crate::conn::{ConnectionCore, UnbufferedConnectionCommon};
 use crate::crypto::{CryptoProvider, SupportedKxGroup};
@@ -134,6 +135,11 @@ pub trait ResolvesClientCert: fmt::Debug + Send + Sync {
 /// These must be created via the [`ClientConfig::builder()`] or [`ClientConfig::builder_with_provider()`]
 /// function.
 ///
+/// Note that using [`ClientConfig::with_ech]` will produce a common configuration specific to
+/// the provided [`crate::client::EchConfig`] that may not be appropriate for all connections made
+/// by the program. In this case the configuration should only be shared by connections intended
+/// for domains that offer the provided [`crate::client::EchConfig`] in their DNS zone.
+///
 /// # Defaults
 ///
 /// * [`ClientConfig::max_fragment_size`]: the default is `None` (meaning 16kB).
@@ -248,6 +254,9 @@ pub struct ClientConfig {
     /// This is optional: [`compress::CompressionCache::Disabled`] gives
     /// a cache that does no caching.
     pub cert_compression_cache: Arc<compress::CompressionCache>,
+
+    /// How to offer Encrypted Client Hello (ECH). The default is to not offer ECH.
+    pub(super) ech_config: Option<EchConfig>,
 }
 
 impl ClientConfig {

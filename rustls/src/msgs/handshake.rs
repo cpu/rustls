@@ -2663,7 +2663,30 @@ pub struct EchConfigContents {
     pub key_config: HpkeKeyConfig,
     pub maximum_name_length: u8,
     pub public_name: DnsName<'static>,
-    pub extensions: PayloadU16,
+    pub extensions: Vec<EchConfigExtension>,
+}
+
+impl EchConfigContents {
+    /// Returns true if there is more than one extension of a given
+    /// type.
+    pub(crate) fn has_duplicate_extension(&self) -> bool {
+        has_duplicates::<_, _, u16>(
+            self.extensions
+                .iter()
+                .map(|ext| ext.ext_type()),
+        )
+    }
+
+    /// Returns true if there is at least one mandatory unsupported extension.
+    pub(crate) fn has_unknown_mandatory_extension(&self) -> bool {
+        self.extensions
+            .iter()
+            // An extension is considered mandatory if the high bit of its type is set.
+            .any(|ext| {
+                matches!(ext.ext_type(), ExtensionType::Unknown(_))
+                    && u16::from(ext.ext_type()) & 0x8000 != 0
+            })
+    }
 }
 
 impl Codec<'_> for EchConfigContents {
@@ -2684,39 +2707,102 @@ impl Codec<'_> for EchConfigContents {
                     .map_err(|_| InvalidMessage::InvalidServerName)?
                     .to_owned()
             },
-            extensions: PayloadU16::read(r)?,
+            extensions: Vec::read(r)?,
         })
     }
 }
 
+/// An encrypted client hello (ECH) config.
 #[derive(Clone, Debug, PartialEq)]
-pub struct EchConfig {
-    pub version: EchVersion,
-    pub contents: EchConfigContents,
+pub enum EchConfig {
+    /// A recognized V18 ECH configuration.
+    V18(EchConfigContents),
+    /// An unknown version ECH configuration.
+    Unknown {
+        version: EchVersion,
+        contents: PayloadU16,
+    },
+}
+
+impl TlsListElement for EchConfig {
+    const SIZE_LEN: ListLength = ListLength::U16;
 }
 
 impl Codec<'_> for EchConfig {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.version.encode(bytes);
-        let mut contents = Vec::with_capacity(128);
-        self.contents.encode(&mut contents);
-        let length: &mut [u8; 2] = &mut [0, 0];
-        codec::put_u16(contents.len() as u16, length);
-        bytes.extend_from_slice(length);
-        bytes.extend(contents);
+        match self {
+            Self::V18(c) => {
+                // Write the version, the length, and the contents.
+                EchVersion::V18.encode(bytes);
+                let inner = LengthPrefixedBuffer::new(ListLength::U16, bytes);
+                c.encode(inner.buf);
+            }
+            Self::Unknown { version, contents } => {
+                // Unknown configuration versions are opaque.
+                version.encode(bytes);
+                contents.encode(bytes);
+            }
+        }
     }
 
     fn read(r: &mut Reader) -> Result<Self, InvalidMessage> {
         let version = EchVersion::read(r)?;
         let length = u16::read(r)?;
-        Ok(Self {
-            version,
-            contents: EchConfigContents::read(&mut r.sub(length as usize)?)?,
+        let mut contents = r.sub(length as usize)?;
+
+        Ok(match version {
+            EchVersion::V18 => Self::V18(EchConfigContents::read(&mut contents)?),
+            _ => {
+                // Note: we don't PayloadU16::read() here because we've already read the length prefix.
+                let data = PayloadU16::new(contents.rest().into());
+                Self::Unknown {
+                    version,
+                    contents: data,
+                }
+            }
         })
     }
 }
 
-impl TlsListElement for EchConfig {
+#[derive(Clone, Debug, PartialEq)]
+pub enum EchConfigExtension {
+    Unknown(UnknownExtension),
+}
+
+impl EchConfigExtension {
+    pub(crate) fn ext_type(&self) -> ExtensionType {
+        match *self {
+            Self::Unknown(ref r) => r.typ,
+        }
+    }
+}
+
+impl Codec<'_> for EchConfigExtension {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.ext_type().encode(bytes);
+
+        let nested = LengthPrefixedBuffer::new(ListLength::U16, bytes);
+        match *self {
+            Self::Unknown(ref r) => r.encode(nested.buf),
+        }
+    }
+
+    fn read(r: &mut Reader) -> Result<Self, InvalidMessage> {
+        let typ = ExtensionType::read(r)?;
+        let len = u16::read(r)? as usize;
+        let mut sub = r.sub(len)?;
+
+        #[allow(clippy::match_single_binding)] // Future-proofing.
+        let ext = match typ {
+            _ => Self::Unknown(UnknownExtension::read(typ, &mut sub)),
+        };
+
+        sub.expect_empty("EchConfigExtension")
+            .map(|_| ext)
+    }
+}
+
+impl TlsListElement for EchConfigExtension {
     const SIZE_LEN: ListLength = ListLength::U16;
 }
 
@@ -2730,4 +2816,57 @@ fn has_duplicates<I: IntoIterator<Item = E>, E: Into<T>, T: Eq + Ord>(iter: I) -
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ech_config_dupe_exts() {
+        let unknown_ext = EchConfigExtension::Unknown(UnknownExtension {
+            typ: ExtensionType::Unknown(0x42),
+            payload: Payload::new(vec![0x42]),
+        });
+        let mut config = config_template();
+        config
+            .extensions
+            .push(unknown_ext.clone());
+        config.extensions.push(unknown_ext);
+
+        assert!(config.has_duplicate_extension());
+        assert!(!config.has_unknown_mandatory_extension());
+    }
+
+    #[test]
+    fn test_ech_config_mandatory_exts() {
+        let mandatory_unknown_ext = EchConfigExtension::Unknown(UnknownExtension {
+            typ: ExtensionType::Unknown(0x42 | 0x8000), // Note: high bit set.
+            payload: Payload::new(vec![0x42]),
+        });
+        let mut config = config_template();
+        config
+            .extensions
+            .push(mandatory_unknown_ext);
+
+        assert!(!config.has_duplicate_extension());
+        assert!(config.has_unknown_mandatory_extension());
+    }
+
+    fn config_template() -> EchConfigContents {
+        EchConfigContents {
+            key_config: HpkeKeyConfig {
+                config_id: 0,
+                kem_id: HpkeKem::DHKEM_P256_HKDF_SHA256,
+                public_key: PayloadU16(b"xxx".into()),
+                symmetric_cipher_suites: vec![HpkeSymmetricCipherSuite {
+                    kdf_id: HpkeKdf::HKDF_SHA256,
+                    aead_id: HpkeAead::AES_128_GCM,
+                }],
+            },
+            maximum_name_length: 0,
+            public_name: DnsName::try_from("example.com").unwrap(),
+            extensions: vec![],
+        }
+    }
 }

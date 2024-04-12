@@ -35,6 +35,9 @@ pub enum Error {
         got_type: HandshakeType,
     },
 
+    /// An error occurred while handling Encrypted Client Hello (ECH).
+    InvalidEncryptedClientHello(EncryptedClientHelloError),
+
     /// The peer sent us a TLS message with invalid contents.
     InvalidMessage(InvalidMessage),
 
@@ -480,6 +483,23 @@ impl From<CertRevocationListError> for Error {
     }
 }
 
+#[non_exhaustive]
+#[derive(Debug, Clone, Eq, PartialEq)]
+/// An error that occurred while handling Encrypted Client Hello (ECH).
+pub enum EncryptedClientHelloError {
+    /// The provided ECH configuration list was invalid.
+    InvalidConfigList,
+    /// No compatible ECH configuration.
+    NoCompatibleConfig,
+}
+
+impl From<EncryptedClientHelloError> for Error {
+    #[inline]
+    fn from(e: EncryptedClientHelloError) -> Self {
+        Self::InvalidEncryptedClientHello(e)
+    }
+}
+
 fn join<T: fmt::Debug>(items: &[T]) -> String {
     items
         .iter()
@@ -524,6 +544,9 @@ impl fmt::Display for Error {
             Self::NoCertificatesPresented => write!(f, "peer sent no certificates"),
             Self::UnsupportedNameType => write!(f, "presented server name type wasn't supported"),
             Self::DecryptError => write!(f, "cannot decrypt peer's message"),
+            Self::InvalidEncryptedClientHello(ref err) => {
+                write!(f, "encrypted client hello failure: {:?}", err)
+            }
             Self::EncryptError => write!(f, "cannot encrypt message"),
             Self::PeerSentOversizedRecord => write!(f, "peer sent excess record size"),
             Self::HandshakeNotComplete => write!(f, "handshake not complete"),

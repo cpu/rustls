@@ -146,6 +146,17 @@ pub(super) fn start_handshake(
     let random = Random::new(config.provider.secure_random)?;
     let extension_order_seed = crate::rand::random_u16(config.provider.secure_random)?;
 
+    // TODO(XXX): Construct ECH context state, use to perform ECH flow when
+    //   emitting client hello.
+    let _ech_context = config
+        .ech_config
+        .as_ref()
+        .map(|ech_config| {
+            let _suite = &ech_config.suite;
+            let _config = &ech_config.config;
+            Some(())
+        });
+
     Ok(emit_client_hello_for_retry(
         transcript_buffer,
         None,
