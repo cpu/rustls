@@ -16,7 +16,7 @@ use crate::check::inappropriate_handshake_message;
 use crate::client::client_conn::ClientConnectionData;
 use crate::client::common::ClientHelloDetails;
 use crate::client::ech::EchState;
-use crate::client::{tls13, ClientConfig};
+use crate::client::{tls13, ClientConfig, EchStatus};
 use crate::common_state::{CommonState, HandshakeKind, State};
 use crate::conn::ConnectionRandoms;
 use crate::crypto::{ActiveKeyExchange, KeyExchangeAlgorithm};
@@ -176,6 +176,7 @@ pub(super) fn start_handshake(
             hello: ClientHelloDetails::new(extension_order_seed),
             session_id,
             server_name,
+            prev_ech_ext: None,
         },
         cx,
         ech_state,
@@ -206,6 +207,7 @@ struct ClientHelloInput {
     hello: ClientHelloDetails,
     session_id: SessionId,
     server_name: ServerName<'static>,
+    prev_ech_ext: Option<ClientExtension>,
 }
 
 fn emit_client_hello_for_retry(
@@ -331,16 +333,30 @@ fn emit_client_hello_for_retry(
     // Extra extensions must be placed before the PSK extension
     exts.extend(extra_exts.iter().cloned());
 
+    // If this is a second client hello we're constructing in response to an HRR, and
+    // we've rejected ECH, then we need to carry forward the exact same ECH
+    // extension we used in the first hello.
+    if matches!(cx.data.ech_status, EchStatus::Rejected) & retryreq.is_some() {
+        if let Some(prev_ech_ext) = input.prev_ech_ext.take() {
+            exts.push(prev_ech_ext);
+        }
+    }
+
     // Do we have a SessionID or ticket cached for this host?
     let tls13_session = prepare_resumption(&input.resuming, &mut exts, suite, cx, config);
 
     // Extensions MAY be randomized
     // but they also need to keep the same order as the previous ClientHello
     exts.sort_by_cached_key(|new_ext| {
-        // PSK extension is always last
-        if let ClientExtension::PresharedKey(..) = new_ext {
-            return u32::MAX;
-        }
+        match (&cx.data.ech_status, new_ext) {
+            // When not offering ECH/GREASE, the PSK extension is always last.
+            (EchStatus::NotOffered, ClientExtension::PresharedKey(..)) => return u32::MAX,
+            // When ECH or GREASE are in-play, the ECH extension is always last.
+            (_, ClientExtension::EncryptedClientHello(_)) => return u32::MAX,
+            // ... and the PSK extension should be second-to-last.
+            (_, ClientExtension::PresharedKey(..)) => return u32::MAX - 1,
+            _ => {}
+        };
 
         let seed = (input.hello.extension_order_seed as u32) << 16
             | (u16::from(new_ext.ext_type()) as u32);
@@ -371,9 +387,18 @@ fn emit_client_hello_for_retry(
         extensions: exts,
     };
 
-    if let Some(ech_state) = &mut ech_state {
-        // Replace the client hello payload with an ECH client hello payload.
-        chp_payload = ech_state.ech_hello(chp_payload, retryreq, &tls13_session)?;
+    #[allow(clippy::single_match)] // TODO(@cpu): using a match to reduce churn.
+    match (cx.data.ech_status, &mut ech_state) {
+        // If we haven't offered ECH, or have offered ECH but got a non-rejecting HRR, then
+        // we need to replace the client hello payload with an ECH client hello payload.
+        (EchStatus::NotOffered | EchStatus::Offered, Some(ech_state)) => {
+            // Replace the client hello payload with an ECH client hello payload.
+            chp_payload = ech_state.ech_hello(chp_payload, retryreq, &tls13_session)?;
+            cx.data.ech_status = EchStatus::Offered;
+            // Store the ECH extension in case we need to carry it forward in a subsequent hello.
+            input.prev_ech_ext = chp_payload.extensions.last().cloned();
+        }
+        _ => {}
     }
 
     // Note what extensions we sent.

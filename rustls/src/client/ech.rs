@@ -3,27 +3,34 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use pki_types::{DnsName, EchConfigListBytes, ServerName};
+use subtle::ConstantTimeEq;
 
 use crate::client::tls13;
+use crate::crypto::hash::Hash;
 use crate::crypto::hpke::{EncapsulatedSecret, Hpke, HpkePublicKey, HpkeSealer, HpkeSuite};
 use crate::crypto::SecureRandom;
-use crate::hash_hs::HandshakeHashBuffer;
+use crate::hash_hs::{HandshakeHash, HandshakeHashBuffer};
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace, warn};
-use crate::msgs::base::PayloadU16;
+use crate::msgs::base::{Payload, PayloadU16};
 use crate::msgs::codec::{Codec, Reader};
 use crate::msgs::enums::ExtensionType;
 use crate::msgs::handshake::{
-    ClientExtension, ClientHelloPayload, EchConfig as EchConfigMsg, EncryptedClientHello,
+    ClientExtension, ClientHelloPayload, EchConfig as EchConfigMsg, Encoding, EncryptedClientHello,
     EncryptedClientHelloOuter, HandshakeMessagePayload, HandshakePayload, HelloRetryRequest,
-    HpkeSymmetricCipherSuite, PresharedKeyBinder, PresharedKeyOffer, Random, SessionId,
+    HpkeSymmetricCipherSuite, PresharedKeyBinder, PresharedKeyOffer, Random, ServerHelloPayload,
+    SessionId,
 };
 use crate::msgs::message::{Message, MessagePayload};
 use crate::msgs::persist;
 use crate::msgs::persist::Retrieved;
 use crate::tls13::key_schedule::KeyScheduleEarly;
+use crate::tls13::key_schedule::KeyScheduleHandshakeStart;
 use crate::CipherSuite::TLS_EMPTY_RENEGOTIATION_INFO_SCSV;
-use crate::{EncryptedClientHelloError, Error, HandshakeType, ProtocolVersion};
+use crate::{
+    AlertDescription, CommonState, EncryptedClientHelloError, Error, HandshakeType,
+    PeerIncompatible, ProtocolVersion,
+};
 
 /// Configuration for performing encrypted client hello.
 ///
@@ -129,6 +136,19 @@ impl EchConfig {
 
         Err(EncryptedClientHelloError::NoCompatibleConfig.into())
     }
+}
+
+/// An enum representing ECH offer status.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum EchStatus {
+    /// ECH was not offered - it is a normal TLS handshake.
+    NotOffered,
+    /// ECH was offered but we do not yet know whether the offer was accepted or rejected.
+    Offered,
+    /// ECH was offered and the server accepted.
+    Accepted,
+    /// ECH was offered and the server rejected.
+    Rejected,
 }
 
 /// Contextual data for a TLS client handshake that has offered encrypted client hello (ECH).
@@ -290,6 +310,54 @@ impl EchState {
             .push(outer_hello_ext(self, enc, payload));
 
         Ok(outer_hello)
+    }
+
+    /// Confirm whether an ECH offer was accepted based on examining the server hello.
+    pub(crate) fn confirm_acceptance(
+        self,
+        ks: &mut KeyScheduleHandshakeStart,
+        server_hello: &ServerHelloPayload,
+        hash: &'static dyn Hash,
+    ) -> Result<Option<EchAccepted>, Error> {
+        // Start the inner transcript hash now that we know the hash algorithm to use.
+        let inner_transcript = self
+            .inner_hello_transcript
+            .start_hash(hash);
+
+        // Fork the transcript that we've started with the inner hello to use for a confirmation step.
+        // We need to preserve the original inner_transcript to use if this confirmation succeeds.
+        let mut confirmation_transcript = inner_transcript.clone();
+
+        // Add the server hello confirmation - this differs from the standard server hello encoding.
+        confirmation_transcript.add_message(&Self::server_hello_conf(server_hello));
+
+        // Derive a confirmation secret from the inner hello random and the confirmation transcript.
+        let derived = ks.server_ech_confirmation_secret(
+            self.inner_hello_random.0.as_ref(),
+            confirmation_transcript.current_hash(),
+        );
+
+        // Check that first 8 digits of the derived secret match the last 8 digits of the original
+        // server random. This match signals that the server accepted the ECH offer.
+        // Indexing safety: Random is [0; 32] by construction.
+        Ok(
+            match ConstantTimeEq::ct_eq(derived.as_ref(), server_hello.random.0[24..].as_ref())
+                .into()
+            {
+                true => {
+                    trace!("ECH accepted by server");
+                    Some(EchAccepted {
+                        transcript: inner_transcript,
+                        random: self.inner_hello_random,
+                        sent_extensions: self.sent_extensions,
+                    })
+                }
+                false => {
+                    trace!("ECH rejected by server");
+                    None
+                }
+            },
+        )
     }
 
     fn encode_inner_hello(
@@ -493,4 +561,42 @@ impl EchState {
             .collect::<Result<_, _>>()?;
         Ok(())
     }
+
+    fn server_hello_conf(server_hello: &ServerHelloPayload) -> Message {
+        Self::ech_conf_message(HandshakeMessagePayload {
+            typ: HandshakeType::ServerHello,
+            payload: HandshakePayload::ServerHello(server_hello.clone()),
+        })
+    }
+
+    fn ech_conf_message(hmp: HandshakeMessagePayload) -> Message {
+        let mut hmp_encoded = Vec::new();
+        hmp.payload_encode(&mut hmp_encoded, Encoding::EchConfirmation);
+        Message {
+            version: ProtocolVersion::TLSv1_3,
+            payload: MessagePayload::Handshake {
+                encoded: Payload::new(hmp_encoded),
+                parsed: hmp,
+            },
+        }
+    }
+}
+
+/// Returned from EchState::check_acceptance when the server has accepted the ECH offer.
+///
+/// Holds the state required to continue the handshake with the inner hello from the ECH offer.
+pub(crate) struct EchAccepted {
+    pub(crate) transcript: HandshakeHash,
+    pub(crate) random: Random,
+    pub(crate) sent_extensions: Vec<ExtensionType>,
+}
+
+pub(crate) fn fatal_alert_required(
+    retry_configs: Option<Vec<EchConfigMsg>>,
+    common: &mut CommonState,
+) -> Error {
+    common.send_fatal_alert(
+        AlertDescription::EncryptedClientHelloRequired,
+        PeerIncompatible::ServerRejectedEncryptedClientHello(retry_configs),
+    )
 }

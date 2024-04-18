@@ -247,6 +247,7 @@ pub enum PeerMisbehaved {
     UnsolicitedSctList,
     UnsolicitedServerHelloExtension,
     WrongGroupForKeyShare,
+    UnsolicitedEchExtension,
 }
 
 impl From<PeerMisbehaved> for Error {

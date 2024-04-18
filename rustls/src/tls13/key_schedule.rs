@@ -23,6 +23,7 @@ enum SecretKind {
     ExporterMasterSecret,
     ResumptionMasterSecret,
     DerivedSecret,
+    ServerEchConfirmationSecret,
 }
 
 impl SecretKind {
@@ -38,6 +39,8 @@ impl SecretKind {
             ExporterMasterSecret => b"exp master",
             ResumptionMasterSecret => b"res master",
             DerivedSecret => b"derived",
+            // https://datatracker.ietf.org/doc/html/draft-ietf-tls-esni-18#section-7.2
+            ServerEchConfirmationSecret => b"ech accept confirmation",
         }
     }
 
@@ -205,6 +208,30 @@ impl KeyScheduleHandshakeStart {
         new.ks
             .set_encrypter(&new.server_handshake_traffic_secret, common);
         new
+    }
+
+    pub(crate) fn server_ech_confirmation_secret(
+        &mut self,
+        client_hello_inner_random: &[u8],
+        hs_hash: hash::Output,
+    ) -> [u8; 8] {
+        /*
+        Per ietf-tls-esni-17 section 7.2:
+        <https://datatracker.ietf.org/doc/html/draft-ietf-tls-esni-17#section-7.2>
+        accept_confirmation = HKDF-Expand-Label(
+          HKDF-Extract(0, ClientHelloInner.random),
+          "ech accept confirmation",
+          transcript_ech_conf,8)
+         */
+        hkdf_expand_label(
+            self.ks
+                .suite
+                .hkdf_provider
+                .extract_from_secret(None, client_hello_inner_random)
+                .as_ref(),
+            SecretKind::ServerEchConfirmationSecret.to_bytes(),
+            hs_hash.as_ref(),
+        )
     }
 
     fn into_handshake(
