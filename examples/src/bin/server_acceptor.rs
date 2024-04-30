@@ -16,7 +16,7 @@ use docopt::Docopt;
 use rcgen::KeyPair;
 use rustls::pki_types::{CertificateRevocationListDer, PrivatePkcs8KeyDer};
 use rustls::server::{Acceptor, ClientHello, ServerConfig, WebPkiClientVerifier};
-use rustls::RootCertStore;
+use rustls::{Error, RootCertStore};
 use serde_derive::Deserialize;
 
 fn main() {
@@ -102,7 +102,7 @@ fn main() {
     // Start a TLS server accepting connections as they arrive.
     let listener =
         std::net::TcpListener::bind(format!("[::]:{}", args.flag_port.unwrap_or(4443))).unwrap();
-    for stream in listener.incoming() {
+    'stream_loop: for stream in listener.incoming() {
         let mut stream = stream.unwrap();
         let mut acceptor = Acceptor::default();
 
@@ -114,6 +114,21 @@ fn main() {
             match acceptor.accept() {
                 Ok(Some(accepted)) => break accepted,
                 Ok(None) => continue,
+                Err((Error::InvalidFirstMessage(_, pt), _)) => {
+                    // You could use `err.0.downcast_ref::<Error>()` to inspect the error type, or
+                    // use some other heuristic on `pt` to decide whether to handle it as plaintext
+                    // HTTP or not
+                    stream
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\n\r\nPlaintext be gone ({} bytes)\r\n",
+                                pt.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .unwrap();
+                    continue 'stream_loop;
+                }
                 Err((e, mut alert)) => {
                     alert.write_all(&mut stream).unwrap();
                     panic!("error accepting connection: {e}");

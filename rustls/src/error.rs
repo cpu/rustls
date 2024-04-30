@@ -102,6 +102,15 @@ pub enum Error {
     ///
     /// Enums holding this variant will never compare equal to each other.
     Other(OtherError),
+
+    /// The first message read from the connection was not valid.
+    ///
+    /// The underlying cause is returned as an [OtherError], and the invalid data
+    /// read from the connection is also returned. This allows the caller to attempt
+    /// to handle the data in some other fashion if desired. For example, an HTTPS
+    /// server may wish to heuristically identify the returned data as a plaintext
+    /// HTTP request and serve a redirect.
+    InvalidFirstMessage(OtherError, Vec<u8>),
 }
 
 /// A corrupt TLS message payload that resulted in an error.
@@ -524,6 +533,7 @@ impl fmt::Display for Error {
             }
             Self::General(ref err) => write!(f, "unexpected error: {}", err),
             Self::Other(ref err) => write!(f, "other error: {}", err),
+            Self::InvalidFirstMessage(ref err, _) => write!(f, "invalid first message: {}", err),
         }
     }
 }

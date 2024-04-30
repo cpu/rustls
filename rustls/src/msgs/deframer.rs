@@ -544,6 +544,11 @@ impl<'a> DeframerSliceBuffer<'a> {
         self.len() == 0
     }
 
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        self.buf
+    }
+
     /// Remove a `RawSlice` range from the deframer buffer, returning a mutable reference to the
     /// removed portion.
     ///

@@ -5662,7 +5662,12 @@ fn test_acceptor() {
         .read_tls(&mut [0x80, 0x00].as_ref())
         .unwrap(); // invalid message (len = 32k bytes)
     let (err, mut alert) = acceptor.accept().unwrap_err();
-    assert_eq!(err, Error::InvalidMessage(InvalidMessage::MessageTooLarge));
+    match err {
+        Error::InvalidFirstMessage(inner_err, _) => {
+            assert_eq!(inner_err.0.downcast_ref::<Error>(), Some(&Error::InvalidMessage(InvalidMessage::MessageTooLarge)))
+        }
+        _ => panic!("unexpected error: {err}")
+    }
     let mut alert_content = Vec::new();
     let _ = alert.write(&mut alert_content);
     let expected = build_alert(AlertLevel::Fatal, AlertDescription::DecodeError, &[]);

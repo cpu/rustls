@@ -4,6 +4,8 @@ use core::mem;
 use core::ops::{Deref, DerefMut};
 #[cfg(feature = "std")]
 use std::io;
+#[cfg(feature = "std")]
+use std::sync::Arc;
 
 use crate::common_state::{CommonState, Context, IoState, State, DEFAULT_BUFFER_LIMIT};
 use crate::enums::{AlertDescription, ContentType};
@@ -15,6 +17,8 @@ use crate::msgs::handshake::Random;
 use crate::msgs::message::{InboundPlainMessage, Message, MessagePayload};
 use crate::suites::{ExtractedSecrets, PartiallyExtractedSecrets};
 use crate::vecbuf::ChunkVecBuffer;
+#[cfg(feature = "std")]
+use crate::OtherError;
 
 pub(crate) mod unbuffered;
 
@@ -624,13 +628,18 @@ impl<Data> ConnectionCommon<Data> {
             .core
             .deframe(None, &mut deframer_buffer)
             .map(|opt| opt.map(|pm| Message::try_from(pm).map(|m| m.into_owned())));
+        let unknown_data = deframer_buffer.as_slice().to_vec();
         let discard = deframer_buffer.pending_discard();
         self.deframer_buffer.discard(discard);
 
-        match res? {
-            Some(Ok(msg)) => Ok(Some(msg)),
-            Some(Err(err)) => Err(self.send_fatal_alert(AlertDescription::DecodeError, err)),
-            None => Ok(None),
+        match res {
+            Ok(Some(Ok(msg))) => Ok(Some(msg)),
+            Ok(Some(Err(err))) => Err(self.send_fatal_alert(AlertDescription::DecodeError, err)),
+            Ok(None) => Ok(None),
+            Err(err) => Err(Error::InvalidFirstMessage(
+                OtherError(Arc::new(err)),
+                unknown_data,
+            )),
         }
     }
 
