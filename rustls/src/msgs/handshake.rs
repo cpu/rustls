@@ -892,46 +892,47 @@ impl ClientHelloPayload {
         self.cipher_suites.encode(bytes);
         self.compression_methods.encode(bytes);
 
-        match purpose {
+        let to_compress = match purpose {
             // Compressed extensions must be replaced in the encoded inner client hello.
-            Encoding::EchInnerHello { to_compress } if !to_compress.is_empty() => {
-                // Safety: not empty check in match guard.
-                let first_compressed_type = *to_compress.first().unwrap();
-
-                // Compressed extensions are in a contiguous range and must be replaced
-                // with a marker extension.
-                let compressed_start_idx = self
-                    .extensions
-                    .iter()
-                    .position(|ext| ext.ext_type() == first_compressed_type);
-                let compressed_end_idx =
-                    compressed_start_idx.map(|start| start + to_compress.len());
-                let marker_ext = ClientExtension::EncryptedClientHelloOuterExtensions(to_compress);
-
-                let exts = self
-                    .extensions
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, ext)| {
-                        if Some(i) == compressed_start_idx {
-                            Some(&marker_ext)
-                        } else if Some(i) > compressed_start_idx && Some(i) < compressed_end_idx {
-                            None
-                        } else {
-                            Some(ext)
-                        }
-                    });
-
-                let nested = LengthPrefixedBuffer::new(ListLength::U16, bytes);
-                for ext in exts {
-                    ext.encode(nested.buf);
-                }
-            }
+            Encoding::EchInnerHello { to_compress } if !to_compress.is_empty() => to_compress,
             _ => {
                 if !self.extensions.is_empty() {
                     self.extensions.encode(bytes);
                 }
+
+                return;
             }
+        };
+
+        // Safety: not empty check in match guard.
+        let first_compressed_type = *to_compress.first().unwrap();
+
+        // Compressed extensions are in a contiguous range and must be replaced
+        // with a marker extension.
+        let compressed_start_idx = self
+            .extensions
+            .iter()
+            .position(|ext| ext.ext_type() == first_compressed_type);
+        let compressed_end_idx = compressed_start_idx.map(|start| start + to_compress.len());
+        let marker_ext = ClientExtension::EncryptedClientHelloOuterExtensions(to_compress);
+
+        let exts = self
+            .extensions
+            .iter()
+            .enumerate()
+            .filter_map(|(i, ext)| {
+                if Some(i) == compressed_start_idx {
+                    Some(&marker_ext)
+                } else if Some(i) > compressed_start_idx && Some(i) < compressed_end_idx {
+                    None
+                } else {
+                    Some(ext)
+                }
+            });
+
+        let nested = LengthPrefixedBuffer::new(ListLength::U16, bytes);
+        for ext in exts {
+            ext.encode(nested.buf);
         }
     }
 
