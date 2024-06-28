@@ -10,7 +10,7 @@ use rustls::internal::msgs::codec::Codec;
 use rustls::internal::msgs::handshake::{ClientExtension, HandshakePayload};
 use rustls::internal::msgs::message::{Message, MessagePayload};
 use rustls::version::{TLS12, TLS13};
-use rustls::{CipherSuite, ClientConfig};
+use rustls::{CipherSuite, ClientConfig, NamedGroup};
 
 use super::*;
 
@@ -61,10 +61,11 @@ fn ffdhe_ciphersuite() {
                 .with_safe_default_protocol_versions()
                 .unwrap(),
         );
-        do_suite_test(
+        do_suite_and_kx_test(
             client_config,
             server_config,
             expected_cipher_suite,
+            NamedGroup::FFDHE2048,
             expected_protocol.version,
         );
     }
@@ -188,6 +189,13 @@ fn server_avoids_dhe_cipher_suites_when_client_has_no_known_dhe_in_groups_ext() 
             .suite(),
         CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
     );
+    assert_eq!(
+        server
+            .negotiated_key_exchange_group()
+            .unwrap()
+            .name(),
+        NamedGroup::secp256r1,
+    )
 }
 
 #[test]
@@ -253,6 +261,7 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
             ],
             &TLS12,
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            Some(NamedGroup::secp256r1),
         ),
         (
             vec![
@@ -262,6 +271,7 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
             ],
             &TLS12,
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            Some(NamedGroup::secp256r1),
         ),
         (
             vec![
@@ -271,6 +281,7 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
             ],
             &TLS12,
             CipherSuite::TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,
+            Some(NamedGroup::FFDHE2048),
         ),
         (
             // TLS 1.3, have common
@@ -281,6 +292,7 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
             ],
             &TLS13,
             CipherSuite::TLS13_AES_128_GCM_SHA256,
+            Some(NamedGroup::secp256r1),
         ),
         (
             vec![
@@ -290,6 +302,7 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
             ],
             &TLS13,
             CipherSuite::TLS13_AES_128_GCM_SHA256,
+            Some(NamedGroup::secp256r1),
         ),
         (
             vec![
@@ -299,10 +312,11 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
             ],
             &TLS13,
             CipherSuite::TLS13_AES_128_GCM_SHA256,
+            None, // Server replies with a HRR and we don't complete the handshake.
         ),
     ];
 
-    for (client_kx_groups, protocol_version, expected_cipher_suite) in test_cases {
+    for (client_kx_groups, protocol_version, expected_cipher_suite, expected_group) in test_cases {
         let client_config = finish_client_config(
             KeyType::Rsa2048,
             rustls::ClientConfig::builder_with_provider(
@@ -331,6 +345,12 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
                 .unwrap()
                 .suite(),
             expected_cipher_suite
+        );
+        assert_eq!(
+            server
+                .negotiated_key_exchange_group()
+                .map(|kx| kx.name()),
+            expected_group,
         );
         assert_eq!(server.protocol_version(), Some(protocol_version.version));
     }

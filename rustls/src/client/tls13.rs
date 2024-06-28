@@ -14,7 +14,7 @@ use crate::client::ech::{self, EchState, EchStatus};
 use crate::client::{hs, ClientConfig, ClientSessionStore};
 use crate::common_state::{CommonState, HandshakeKind, Protocol, Side, State};
 use crate::conn::ConnectionRandoms;
-use crate::crypto::ActiveKeyExchange;
+use crate::crypto::{ActiveKeyExchange, SupportedKxGroup};
 use crate::enums::{
     AlertDescription, ContentType, HandshakeType, ProtocolVersion, SignatureScheme,
 };
@@ -147,6 +147,7 @@ pub(super) fn handle_server_hello(
         KeySchedulePreHandshake::new(suite)
     };
 
+    cx.common.kx_group = hello.offered_group;
     let shared_secret = our_key_share.complete(&their_key_share.payload.0)?;
 
     let mut key_schedule = key_schedule_pre_handshake.into_handshake(shared_secret);
@@ -228,7 +229,7 @@ fn validate_server_hello(
 pub(super) fn initial_key_share(
     config: &ClientConfig,
     server_name: &ServerName<'_>,
-) -> Result<Box<dyn ActiveKeyExchange>, Error> {
+) -> Result<(&'static dyn SupportedKxGroup, Box<dyn ActiveKeyExchange>), Error> {
     let group = config
         .resumption
         .store
@@ -244,7 +245,7 @@ pub(super) fn initial_key_share(
                 .expect("No kx groups configured")
         });
 
-    group.start()
+    Ok((group, group.start()?))
 }
 
 /// This implements the horrifying TLS1.3 hack where PSK binders have a

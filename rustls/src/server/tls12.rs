@@ -191,6 +191,7 @@ mod client_hello {
                 self.session_id = SessionId::random(self.config.provider.secure_random)?;
             }
 
+            cx.common.kx_group = Some(selected_kxg);
             cx.common.handshake_kind = Some(HandshakeKind::Full);
 
             self.send_ticket = emit_server_hello(
