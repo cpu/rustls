@@ -108,10 +108,11 @@ pub(super) fn start_handshake(
 
     let mut resuming = find_session(&server_name, &config, cx);
 
-    let key_share = if config.supports_version(ProtocolVersion::TLSv1_3) {
-        Some(tls13::initial_key_share(&config, &server_name)?)
+    let (group, key_share) = if config.supports_version(ProtocolVersion::TLSv1_3) {
+        let group_and_keyshare = tls13::initial_key_share(&config, &server_name)?;
+        (Some(group_and_keyshare.0), Some(group_and_keyshare.1))
     } else {
-        None
+        (None, None)
     };
 
     let session_id = if let Some(_resuming) = &mut resuming {
@@ -173,7 +174,7 @@ pub(super) fn start_handshake(
             #[cfg(feature = "tls12")]
             using_ems: false,
             sent_tls13_fake_ccs: false,
-            hello: ClientHelloDetails::new(extension_order_seed),
+            hello: ClientHelloDetails::new(extension_order_seed, group),
             session_id,
             server_name,
             prev_ech_ext: None,
@@ -774,7 +775,11 @@ impl State<ClientConnectionData> for ExpectServerHello {
                 });
             }
             _ => {
-                debug!("Using ciphersuite {:?}", suite);
+                debug!(
+                    "Using ciphersuite {:?} and key exchange group {:?}",
+                    suite,
+                    cx.common.kx_group.map(|kx| kx.name())
+                );
                 self.suite = Some(suite);
                 cx.common.suite = Some(suite);
             }
@@ -1035,6 +1040,7 @@ impl ExpectServerHelloOrHelloRetryRequest {
                     }
                 };
 
+                cx.common.kx_group = Some(skxg);
                 skxg.start()?
             }
             _ => offered_key_share,

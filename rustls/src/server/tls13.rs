@@ -351,6 +351,7 @@ mod client_hello {
                 cx.common
                     .handshake_kind
                     .get_or_insert(HandshakeKind::Full);
+                cx.common.kx_group = Some(chosen_share_and_kxg.1);
             } else {
                 cx.common.handshake_kind = Some(HandshakeKind::Resumed);
             }

@@ -18,8 +18,8 @@ use rustls::internal::msgs::message::{Message, OutboundOpaqueMessage, PlainMessa
 use rustls::server::{ClientCertVerifierBuilder, WebPkiClientVerifier};
 use rustls::{
     ClientConfig, ClientConnection, Connection, ConnectionCommon, ContentType,
-    DigitallySignedStruct, Error, ProtocolVersion, RootCertStore, ServerConfig, ServerConnection,
-    SideData, SignatureScheme, SupportedCipherSuite,
+    DigitallySignedStruct, Error, NamedGroup, ProtocolVersion, RootCertStore, ServerConfig,
+    ServerConnection, SideData, SignatureScheme, SupportedCipherSuite,
 };
 use webpki::anchor_from_trusted_cert;
 
@@ -776,6 +776,100 @@ pub fn do_suite_test(
     assert_eq!(Some(expect_version), server.protocol_version());
     assert_eq!(Some(expect_suite), client.negotiated_cipher_suite());
     assert_eq!(Some(expect_suite), server.negotiated_cipher_suite());
+}
+
+pub fn do_suite_and_kx_test(
+    client_config: ClientConfig,
+    server_config: ServerConfig,
+    expect_suite: SupportedCipherSuite,
+    expect_kx: NamedGroup,
+    expect_version: ProtocolVersion,
+) {
+    println!(
+        "do_suite_test {:?} {:?}",
+        expect_version,
+        expect_suite.suite()
+    );
+    let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
+
+    assert_eq!(None, client.negotiated_cipher_suite());
+    assert_eq!(None, server.negotiated_cipher_suite());
+    assert!(client
+        .negotiated_key_exchange_group()
+        .is_none());
+    assert!(server
+        .negotiated_key_exchange_group()
+        .is_none());
+    assert_eq!(None, client.protocol_version());
+    assert_eq!(None, server.protocol_version());
+    assert!(client.is_handshaking());
+    assert!(server.is_handshaking());
+
+    transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+
+    assert!(client.is_handshaking());
+    assert!(server.is_handshaking());
+    assert_eq!(None, client.protocol_version());
+    assert_eq!(Some(expect_version), server.protocol_version());
+    assert_eq!(None, client.negotiated_cipher_suite());
+    assert_eq!(Some(expect_suite), server.negotiated_cipher_suite());
+    assert!(client
+        .negotiated_key_exchange_group()
+        .is_none());
+    assert_eq!(
+        expect_kx,
+        server
+            .negotiated_key_exchange_group()
+            .unwrap()
+            .name()
+    );
+
+    transfer(&mut server, &mut client);
+    client.process_new_packets().unwrap();
+
+    assert_eq!(Some(expect_suite), client.negotiated_cipher_suite());
+    assert_eq!(Some(expect_suite), server.negotiated_cipher_suite());
+    assert_eq!(
+        expect_kx,
+        client
+            .negotiated_key_exchange_group()
+            .unwrap()
+            .name()
+    );
+    assert_eq!(
+        expect_kx,
+        server
+            .negotiated_key_exchange_group()
+            .unwrap()
+            .name()
+    );
+
+    transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+    transfer(&mut server, &mut client);
+    client.process_new_packets().unwrap();
+
+    assert!(!client.is_handshaking());
+    assert!(!server.is_handshaking());
+    assert_eq!(Some(expect_version), client.protocol_version());
+    assert_eq!(Some(expect_version), server.protocol_version());
+    assert_eq!(Some(expect_suite), client.negotiated_cipher_suite());
+    assert_eq!(Some(expect_suite), server.negotiated_cipher_suite());
+    assert_eq!(
+        expect_kx,
+        client
+            .negotiated_key_exchange_group()
+            .unwrap()
+            .name()
+    );
+    assert_eq!(
+        expect_kx,
+        server
+            .negotiated_key_exchange_group()
+            .unwrap()
+            .name()
+    );
 }
 
 fn exactly_one_provider() -> bool {
