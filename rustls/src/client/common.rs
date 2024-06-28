@@ -3,6 +3,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use super::ResolvesClientCert;
+use crate::crypto::SupportedKxGroup;
 #[cfg(feature = "logging")]
 use crate::log::{debug, trace};
 use crate::msgs::enums::ExtensionType;
@@ -39,6 +40,7 @@ pub(super) struct ClientHelloDetails {
     pub(super) sent_extensions: Vec<ExtensionType>,
     pub(super) extension_order_seed: u16,
     pub(super) offered_cert_compression: bool,
+    pub(super) offered_group: Option<&'static dyn SupportedKxGroup>,
 }
 
 impl ClientHelloDetails {
@@ -47,6 +49,7 @@ impl ClientHelloDetails {
             sent_extensions: Vec::new(),
             extension_order_seed,
             offered_cert_compression: false,
+            offered_group: None,
         }
     }
 

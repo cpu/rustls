@@ -929,6 +929,7 @@ impl State<ClientConnectionData> for ExpectServerDone<'_> {
                 return Err(PeerMisbehaved::SelectedUnofferedKxGroup.into());
             }
         };
+        cx.common.kx_group = Some(skxg);
         let kx = skxg.start()?;
 
         // 5b.
