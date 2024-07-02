@@ -103,6 +103,7 @@ struct Options {
     on_initial_expect_ech_accept: bool,
     enable_ech_grease: bool,
     send_key_update: bool,
+    expect_kx: Option<&'static dyn SupportedKxGroup>,
 }
 
 impl Options {
@@ -165,6 +166,7 @@ impl Options {
             on_initial_expect_ech_accept: false,
             enable_ech_grease: false,
             send_key_update: false,
+            expect_kx: None,
         }
     }
 
@@ -1133,6 +1135,18 @@ fn exec(opts: &Options, mut sess: Connection, count: usize) {
             );
         }
 
+        if opts.expect_kx.is_some() && !sess.is_handshaking() {
+            let expected = opts.expect_kx.unwrap().name();
+            let actual = sess
+                .negotiated_key_exchange_group()
+                .unwrap()
+                .name();
+            assert_eq!(
+                expected, actual,
+                "wanted to see KX {expected:?} but got {actual:?}"
+            );
+        }
+
         #[cfg(feature = "aws_lc_rs")]
         {
             let ech_accept_required =
@@ -1278,8 +1292,10 @@ pub fn main() {
             "-verify-prefs" => {
                 lookup_scheme(args.remove(0).parse::<u16>().unwrap());
             }
+            "-expect-curve-id" => {
+                opts.expect_kx = Some(lookup_kx_group(args.remove(0).parse::<u16>().unwrap()));
+            }
             "-max-cert-list" |
-            "-expect-curve-id" |
             "-expect-resume-curve-id" |
             "-expect-peer-signature-algorithm" |
             "-expect-peer-verify-pref" |
