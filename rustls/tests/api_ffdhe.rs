@@ -180,8 +180,7 @@ fn server_avoids_dhe_cipher_suites_when_client_has_no_known_dhe_in_groups_ext() 
     );
 
     let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
-    transfer(&mut client, &mut server);
-    assert!(server.process_new_packets().is_ok());
+    do_handshake(&mut client, &mut server);
     assert_eq!(
         server
             .negotiated_cipher_suite()
@@ -312,7 +311,7 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
             ],
             &TLS13,
             CipherSuite::TLS13_AES_128_GCM_SHA256,
-            None, // Server replies with a HRR and we don't complete the handshake.
+            Some(NamedGroup::FFDHE2048),
         ),
     ];
 
@@ -337,8 +336,7 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
         .into();
 
         let (mut client, mut server) = make_pair_for_arc_configs(&client_config, &server_config);
-        transfer(&mut client, &mut server);
-        assert!(dbg!(server.process_new_packets()).is_ok());
+        do_handshake(&mut client, &mut server);
         assert_eq!(
             server
                 .negotiated_cipher_suite()
@@ -346,13 +344,13 @@ fn server_avoids_cipher_suite_with_no_common_kx_groups() {
                 .suite(),
             expected_cipher_suite
         );
+        assert_eq!(server.protocol_version(), Some(protocol_version.version));
         assert_eq!(
             server
                 .negotiated_key_exchange_group()
                 .map(|kx| kx.name()),
             expected_group,
         );
-        assert_eq!(server.protocol_version(), Some(protocol_version.version));
     }
 }
 

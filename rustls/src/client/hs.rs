@@ -17,7 +17,7 @@ use crate::client::client_conn::ClientConnectionData;
 use crate::client::common::ClientHelloDetails;
 use crate::client::ech::EchState;
 use crate::client::{tls13, ClientConfig, EchMode, EchStatus};
-use crate::common_state::{CommonState, HandshakeKind, State};
+use crate::common_state::{CommonState, HandshakeKind, KxState, State};
 use crate::conn::ConnectionRandoms;
 use crate::crypto::{ActiveKeyExchange, KeyExchangeAlgorithm};
 use crate::enums::{AlertDescription, CipherSuite, ContentType, HandshakeType, ProtocolVersion};
@@ -108,11 +108,14 @@ pub(super) fn start_handshake(
 
     let mut resuming = find_session(&server_name, &config, cx);
 
-    let (group, key_share) = if config.supports_version(ProtocolVersion::TLSv1_3) {
-        let group_and_keyshare = tls13::initial_key_share(&config, &server_name)?;
-        (Some(group_and_keyshare.0), Some(group_and_keyshare.1))
+    let key_share = if config.supports_version(ProtocolVersion::TLSv1_3) {
+        Some(tls13::initial_key_share(
+            &config,
+            &server_name,
+            &mut cx.common.kx_state,
+        )?)
     } else {
-        (None, None)
+        None
     };
 
     let session_id = if let Some(_resuming) = &mut resuming {
@@ -174,7 +177,7 @@ pub(super) fn start_handshake(
             #[cfg(feature = "tls12")]
             using_ems: false,
             sent_tls13_fake_ccs: false,
-            hello: ClientHelloDetails::new(extension_order_seed, group),
+            hello: ClientHelloDetails::new(extension_order_seed),
             session_id,
             server_name,
             prev_ech_ext: None,
@@ -775,11 +778,7 @@ impl State<ClientConnectionData> for ExpectServerHello {
                 });
             }
             _ => {
-                debug!(
-                    "Using ciphersuite {:?} and key exchange group {:?}",
-                    suite,
-                    cx.common.kx_group.map(|kx| kx.name())
-                );
+                debug!("Using ciphersuite {:?}", suite);
                 self.suite = Some(suite);
                 cx.common.suite = Some(suite);
             }
@@ -1040,7 +1039,7 @@ impl ExpectServerHelloOrHelloRetryRequest {
                     }
                 };
 
-                cx.common.kx_group = Some(skxg);
+                cx.common.kx_state = KxState::Start(skxg);
                 skxg.start()?
             }
             _ => offered_key_share,

@@ -817,13 +817,19 @@ pub fn do_suite_and_kx_test(
     assert!(client
         .negotiated_key_exchange_group()
         .is_none());
-    assert_eq!(
-        expect_kx,
-        server
+    if matches!(expect_version, ProtocolVersion::TLSv1_2) {
+        assert!(server
             .negotiated_key_exchange_group()
-            .unwrap()
-            .name()
-    );
+            .is_none());
+    } else {
+        assert_eq!(
+            expect_kx,
+            server
+                .negotiated_key_exchange_group()
+                .unwrap()
+                .name()
+        );
+    }
 
     transfer(&mut server, &mut client);
     client.process_new_packets().unwrap();
@@ -837,13 +843,19 @@ pub fn do_suite_and_kx_test(
             .unwrap()
             .name()
     );
-    assert_eq!(
-        expect_kx,
-        server
+    if matches!(expect_version, ProtocolVersion::TLSv1_2) {
+        assert!(server
             .negotiated_key_exchange_group()
-            .unwrap()
-            .name()
-    );
+            .is_none());
+    } else {
+        assert_eq!(
+            expect_kx,
+            server
+                .negotiated_key_exchange_group()
+                .unwrap()
+                .name()
+        );
+    }
 
     transfer(&mut client, &mut server);
     server.process_new_packets().unwrap();

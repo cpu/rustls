@@ -35,6 +35,7 @@ use crate::{compress, rand, verify};
 
 mod client_hello {
     use super::*;
+    use crate::common_state::KxState;
     use crate::compress::CertCompressor;
     use crate::crypto::SupportedKxGroup;
     use crate::enums::SignatureScheme;
@@ -351,7 +352,7 @@ mod client_hello {
                 cx.common
                     .handshake_kind
                     .get_or_insert(HandshakeKind::Full);
-                cx.common.kx_group = Some(chosen_share_and_kxg.1);
+                cx.common.kx_state = KxState::Complete(chosen_share_and_kxg.1);
             } else {
                 cx.common.handshake_kind = Some(HandshakeKind::Resumed);
             }

@@ -32,7 +32,7 @@ pub struct CommonState {
     pub(crate) side: Side,
     pub(crate) record_layer: record_layer::RecordLayer,
     pub(crate) suite: Option<SupportedCipherSuite>,
-    pub(crate) kx_group: Option<&'static dyn SupportedKxGroup>,
+    pub(crate) kx_state: KxState,
     pub(crate) alpn_protocol: Option<Vec<u8>>,
     pub(crate) aligned_handshake: bool,
     pub(crate) may_send_application_data: bool,
@@ -65,7 +65,7 @@ impl CommonState {
             side,
             record_layer: record_layer::RecordLayer::new(),
             suite: None,
-            kx_group: None,
+            kx_state: KxState::default(),
             alpn_protocol: None,
             aligned_handshake: true,
             may_send_application_data: false,
@@ -143,9 +143,12 @@ impl CommonState {
 
     /// Retrieves the key exchange group agreed with the peer.
     ///
-    /// This returns None until the key exchange group is agreed.
+    /// This returns None until the key exchange has been completed.
     pub fn negotiated_key_exchange_group(&self) -> Option<&'static dyn SupportedKxGroup> {
-        self.kx_group
+        match self.kx_state {
+            KxState::Complete(group) => Some(group),
+            _ => None,
+        }
     }
 
     /// Retrieves the protocol version agreed with the peer.
@@ -947,6 +950,14 @@ impl Default for TemperCounters {
             allowed_middlebox_ccs: 2,
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub(crate) enum KxState {
+    #[default]
+    None,
+    Start(&'static dyn SupportedKxGroup),
+    Complete(&'static dyn SupportedKxGroup),
 }
 
 const DEFAULT_RECEIVED_PLAINTEXT_LIMIT: usize = 16 * 1024;

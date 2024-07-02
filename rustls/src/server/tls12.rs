@@ -12,7 +12,7 @@ use super::common::ActiveCertifiedKey;
 use super::hs::{self, ServerContext};
 use super::server_conn::{ProducesTickets, ServerConfig, ServerConnectionData};
 use crate::check::inappropriate_message;
-use crate::common_state::{CommonState, HandshakeKind, Side, State};
+use crate::common_state::{CommonState, HandshakeKind, KxState, Side, State};
 use crate::conn::ConnectionRandoms;
 use crate::crypto::ActiveKeyExchange;
 use crate::enums::{AlertDescription, ContentType, HandshakeType, ProtocolVersion};
@@ -34,6 +34,7 @@ use crate::tls12::{self, ConnectionSecrets, Tls12CipherSuite};
 use crate::verify;
 
 mod client_hello {
+    use crate::common_state::KxState;
     use pki_types::CertificateDer;
 
     use super::*;
@@ -191,7 +192,7 @@ mod client_hello {
                 self.session_id = SessionId::random(self.config.provider.secure_random)?;
             }
 
-            cx.common.kx_group = Some(selected_kxg);
+            cx.common.kx_state = KxState::Start(selected_kxg);
             cx.common.handshake_kind = Some(HandshakeKind::Full);
 
             self.send_ticket = emit_server_hello(
@@ -614,6 +615,11 @@ impl State<ServerConnectionData> for ExpectClientKx<'_> {
             self.randoms,
             self.suite,
         )?;
+        cx.common.kx_state = match cx.common.kx_state {
+            KxState::Start(group) => KxState::Complete(group),
+            // Safety: we populate KxState::Start when we produce `server_kx`.
+            _ => unreachable!(),
+        };
 
         self.config.key_log.log(
             "CLIENT_RANDOM",
