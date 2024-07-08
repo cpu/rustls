@@ -6,13 +6,13 @@ jobs:
     steps:
     - name: Build Fuzzers
       id: build
-      uses: google/oss-fuzz/infra/cifuzz/actions/build_fuzzers@master
+      uses: google/oss-fuzz/infra/cifuzz/actions/build_fuzzers@4f4f145b90e8219ebeecff36f19c84aac2f1860b
       with:
         oss-fuzz-project-name: 'rustls'
         dry-run: false
         language: rust
     - name: Run Fuzzers
-      uses: google/oss-fuzz/infra/cifuzz/actions/run_fuzzers@master
+      uses: google/oss-fuzz/infra/cifuzz/actions/run_fuzzers@4f4f145b90e8219ebeecff36f19c84aac2f1860b
       with:
         oss-fuzz-project-name: 'rustls'
         fuzz-seconds: 150
