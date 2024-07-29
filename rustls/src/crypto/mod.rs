@@ -574,6 +574,15 @@ pub fn default_fips_provider() -> CryptoProvider {
     aws_lc_rs::default_provider()
 }
 
+/// Non-panicking `let (nonce, ciphertext) = ciphertext.split_at(...)`.
+#[cfg(any(feature = "aws_lc_rs", feature = "ring"))]
+pub(crate) fn try_split_at(slice: &[u8], mid: usize) -> Option<(&[u8], &[u8])> {
+    match mid > slice.len() {
+        true => None,
+        false => Some(slice.split_at(mid)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::vec;
