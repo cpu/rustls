@@ -83,6 +83,7 @@ jobs:
       # this is required for fips on windows.
       # nb. "--all-targets" does not include doctests
       - name: cargo test (release; all features)
+        if: runner.os == 'Linux' # Can't build fips on Windows/MacOS with CMake 4.0 yet
         run: cargo test --release --locked --all-features --all-targets
         env:
           RUST_BACKTRACE: 1
@@ -90,6 +91,7 @@ jobs:
       # nb. this is separate since `--doc` option cannot be combined with other target option(s) ref:
       # - https://doc.rust-lang.org/cargo/commands/cargo-test.html
       - name: cargo test --doc (release; all-features)
+        if: runner.os == 'Linux' # Can't build fips on Windows/MacOS with CMake 4.0 yet
         run: cargo test --release --locked --all-features --doc
         env:
           RUST_BACKTRACE: 1
@@ -100,6 +102,7 @@ jobs:
           RUST_BACKTRACE: 1
 
       - name: cargo test (release; fips)
+        if: runner.os == 'Linux' # Can't build fips on Windows/MacOS with CMake 4.0 yet
         run: cargo test --release --no-default-features --features fips,tls12,read_buf,logging,std --all-targets
         env:
           RUST_BACKTRACE: 1
@@ -111,15 +114,18 @@ jobs:
         run: cargo build --locked -p rustls-provider-example --no-default-features
 
       - name: cargo test (debug; rustls-provider-example; all features)
+        if: runner.os == 'Linux' # Can't build fips on Windows/MacOS with CMake 4.0 yet
         run: cargo test --all-features -p rustls-provider-example
 
       - name: cargo build (debug; rustls-provider-test)
         run: cargo build --locked -p rustls-provider-test
 
       - name: cargo test (debug; rustls-provider-test; all features)
+        if: runner.os == 'Linux' # Can't build fips on Windows/MacOS with CMake 4.0 yet
         run: cargo test --all-features -p rustls-provider-test
 
       - name: cargo package --all-features -p rustls
+        if: runner.os == 'Linux' # Can't build fips on Windows/MacOS with CMake 4.0 yet
         run: cargo package --all-features -p rustls
 
   msrv:
