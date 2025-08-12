@@ -13,7 +13,7 @@ use std::time::Duration;
 use std::{fs, thread};
 
 use clap::Parser;
-use rcgen::{Issuer, KeyPair, SerialNumber};
+use rcgen::{CertifiedIssuer, KeyPair, SerialNumber};
 use rustls::RootCertStore;
 use rustls::pki_types::{CertificateRevocationListDer, PrivatePkcs8KeyDer};
 use rustls::server::{Acceptor, ClientHello, ServerConfig, WebPkiClientVerifier};
@@ -41,7 +41,7 @@ fn main() {
     // Write out the parts of the test PKI a client will need to connect:
     // * The CA certificate for validating the server certificate.
     // * The client certificate and key for its presented mTLS identity.
-    write_pem(&args.ca_path, &test_pki.ca_cert.1.pem());
+    write_pem(&args.ca_path, &test_pki.ca.pem());
     write_pem(&args.client_cert_path, &test_pki.client_cert.0.cert.pem());
     write_pem(
         &args.client_key_path,
@@ -111,7 +111,7 @@ fn main() {
 /// A test PKI with a CA certificate, server certificate, and client certificate.
 struct TestPki {
     roots: Arc<RootCertStore>,
-    ca_cert: (Issuer<'static, rcgen::KeyPair>, rcgen::Certificate),
+    ca: CertifiedIssuer<'static, KeyPair>,
     client_cert: (rcgen::CertifiedKey<KeyPair>, SerialNumber),
     server_cert: rcgen::CertifiedKey<KeyPair>,
 }
@@ -134,9 +134,9 @@ impl TestPki {
             rcgen::KeyUsagePurpose::DigitalSignature,
             rcgen::KeyUsagePurpose::CrlSign,
         ];
-        let ca_key = KeyPair::generate_for(alg).unwrap();
-        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
-        let ca = Issuer::new(ca_params, ca_key);
+
+        let ca =
+            CertifiedIssuer::self_signed(ca_params, KeyPair::generate_for(alg).unwrap()).unwrap();
 
         // Create a server end entity cert issued by the CA.
         let mut server_ee_params =
@@ -164,12 +164,10 @@ impl TestPki {
 
         // Create a root cert store that includes the CA certificate.
         let mut roots = RootCertStore::empty();
-        roots
-            .add(ca_cert.der().clone())
-            .unwrap();
+        roots.add(ca.der().clone()).unwrap();
         Self {
             roots: roots.into(),
-            ca_cert: (ca, ca_cert),
+            ca,
             client_cert: (
                 rcgen::CertifiedKey {
                     cert: client_cert,
@@ -257,7 +255,7 @@ impl TestPki {
             key_identifier_method: rcgen::KeyIdMethod::Sha256,
         };
         crl_params
-            .signed_by(&self.ca_cert.0)
+            .signed_by(&self.ca)
             .unwrap()
             .into()
     }
