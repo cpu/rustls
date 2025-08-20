@@ -32,13 +32,10 @@ pub fn provider() -> CryptoProvider {
 
 #[cfg(feature = "aws-lc-rs-unstable")]
 mod key_provider {
-    #[cfg(feature = "aws-lc-rs-unstable")]
     use std::fmt::{self, Debug, Formatter};
-    #[cfg(feature = "aws-lc-rs-unstable")]
     use std::sync::Arc;
 
     use aws_lc_rs::signature::KeyPair;
-    #[cfg(feature = "aws-lc-rs-unstable")]
     use aws_lc_rs::unstable::signature::{
         ML_DSA_44_SIGNING, ML_DSA_65_SIGNING, ML_DSA_87_SIGNING, PqdsaKeyPair,
         PqdsaSigningAlgorithm,
@@ -46,7 +43,7 @@ mod key_provider {
     use rustls::crypto::KeyProvider;
     use rustls::crypto::aws_lc_rs::sign;
     use rustls::pki_types::{AlgorithmIdentifier, PrivateKeyDer, SubjectPublicKeyInfoDer, alg_id};
-    use rustls::sign::{Signer, SigningKey};
+    use rustls::sign::{Signer, SigningKey, public_key_to_spki};
     use rustls::{Error, SignatureAlgorithm, SignatureScheme};
 
     #[derive(Debug)]
@@ -124,7 +121,7 @@ mod key_provider {
 
         fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
             Some(public_key_to_spki(
-                self.kind.alg_id(),
+                &self.kind.alg_id(),
                 self.inner.public_key(),
             ))
         }
@@ -176,7 +173,6 @@ mod key_provider {
         }
     }
 
-    #[cfg(feature = "aws-lc-rs-unstable")]
     #[derive(Clone, Copy)]
     enum PqdsaKeyKind {
         MlDsa44,
