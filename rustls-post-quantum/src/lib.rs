@@ -54,13 +54,16 @@ mod key_provider {
             &self,
             key_der: PrivateKeyDer<'static>,
         ) -> Result<Arc<dyn SigningKey>, Error> {
-            const ML_DSA_SIGNING_ALGS: &[&PqdsaSigningAlgorithm] =
-                &[&ML_DSA_44_SIGNING, &ML_DSA_65_SIGNING, &ML_DSA_87_SIGNING];
+            const ML_DSA_SIGNING_ALGS: &[PqdsaKeyKind] = &[
+                PqdsaKeyKind::MlDsa44,
+                PqdsaKeyKind::MlDsa65,
+                PqdsaKeyKind::MlDsa87,
+            ];
 
             for &alg in ML_DSA_SIGNING_ALGS {
                 let key_pair = match &key_der {
                     PrivateKeyDer::Pkcs8(pkcs8) => {
-                        match PqdsaKeyPair::from_pkcs8(alg, pkcs8.secret_pkcs8_der()) {
+                        match PqdsaKeyPair::from_pkcs8(alg.into(), pkcs8.secret_pkcs8_der()) {
                             Ok(key_pair) => key_pair,
                             Err(_) => continue,
                         }
@@ -74,15 +77,7 @@ mod key_provider {
                 };
 
                 return Ok(Arc::new(PqdsaSigningKey {
-                    kind: if alg == &ML_DSA_44_SIGNING {
-                        PqdsaKeyKind::MlDsa44
-                    } else if alg == &ML_DSA_65_SIGNING {
-                        PqdsaKeyKind::MlDsa65
-                    } else if alg == &ML_DSA_87_SIGNING {
-                        PqdsaKeyKind::MlDsa87
-                    } else {
-                        unreachable!("unexpected ML-DSA signing algorithm")
-                    },
+                    kind: alg,
                     inner: Arc::new(key_pair),
                 }));
             }
@@ -194,6 +189,16 @@ mod key_provider {
                 Self::MlDsa44 => alg_id::ML_DSA_44,
                 Self::MlDsa65 => alg_id::ML_DSA_65,
                 Self::MlDsa87 => alg_id::ML_DSA_87,
+            }
+        }
+    }
+
+    impl From<PqdsaKeyKind> for &PqdsaSigningAlgorithm {
+        fn from(kind: PqdsaKeyKind) -> Self {
+            match kind {
+                PqdsaKeyKind::MlDsa44 => &ML_DSA_44_SIGNING,
+                PqdsaKeyKind::MlDsa65 => &ML_DSA_65_SIGNING,
+                PqdsaKeyKind::MlDsa87 => &ML_DSA_87_SIGNING,
             }
         }
     }
