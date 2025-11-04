@@ -1567,6 +1567,68 @@ fn large_client_hello_acceptor() {
 }
 
 #[test]
+fn test_tls12_server_empty_ocsp_response_sends_no_certificate_status_message() {
+    let kt = KeyType::EcdsaP256;
+    let provider = provider::DEFAULT_TLS12_PROVIDER;
+
+    // Configure a server with an empty OCSP response.
+    let server_config = ServerConfig::builder(provider.clone().into())
+        .with_no_client_auth()
+        .with_single_cert_with_ocsp(kt.identity(), kt.key(), Arc::from(&[][..]))
+        .unwrap();
+
+    // Configure a client with a provider that expects to be given an empty OCSP response,
+    // The verifier API doesn't distinguish between no OCSP response, and an empty one.
+    // We rely on our transfer_altered filter to catch whether the server sent the OCSP
+    // response handshake message or not.
+    let client_config = ClientConfig::builder(provider.clone().into())
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(MockServerVerifier::expects_ocsp_response(&[])))
+        .with_no_client_auth()
+        .unwrap();
+
+    let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
+
+    let certificate_status_seen = Arc::new(Mutex::new(false));
+    let certificate_status_seen_2 = certificate_status_seen.clone();
+    let capture_certificate_status = move |msg: &mut Message| -> Altered {
+        if let MessagePayload::Handshake { encoded, .. } = &msg.payload {
+            let bytes = encoded.bytes();
+            let mut offset = 0;
+            while offset + 4 <= bytes.len() {
+                let msg_type = bytes[offset];
+                let length = u32::from_be_bytes([
+                    0,
+                    bytes[offset + 1],
+                    bytes[offset + 2],
+                    bytes[offset + 3],
+                ]);
+                if msg_type == u8::from(HandshakeType::CertificateStatus) {
+                    *certificate_status_seen_2
+                        .lock()
+                        .unwrap() = true;
+                }
+                offset += 4 + length as usize;
+            }
+        }
+        Altered::InPlace
+    };
+
+    rustls_test::transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+    transfer_altered(
+        &mut server.into(),
+        capture_certificate_status,
+        &mut client.into(),
+    );
+
+    assert!(
+        !*certificate_status_seen.lock().unwrap(),
+        "TLS 1.2 server with empty OCSP response should not send CertificateStatus message"
+    );
+}
+
+#[test]
 fn server_invalid_sni_policy() {
     const SERVER_NAME_GOOD: &str = "LXXXxxxXXXR";
     const SERVER_NAME_BAD: &str = "[XXXxxxXXX]";
