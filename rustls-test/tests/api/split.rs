@@ -6,9 +6,10 @@
 
 use std::io::Cursor;
 
+use rustls::crypto::cipher::OutboundPlain;
 use rustls::error::{AlertDescription, ApiMisuse, InvalidMessage};
-use rustls::split::{ReceiveTraffic, ReceiveTrafficState, SplitConnection};
-use rustls::{Connection, Error, SideData, SliceInput, VecInput};
+use rustls::split::{ReceiveTraffic, ReceiveTrafficState, SendTraffic, SplitConnection};
+use rustls::{Connection, Error, ServerConnection, SideData, SliceInput, VecInput};
 use rustls_test::{KeyType, do_handshake, make_pair};
 
 #[test]
@@ -358,6 +359,93 @@ fn close_alongside_data() {
 
 #[test]
 fn read_invalid_data_and_send_alert() {
+    let (send, mut server, mut server_input, mut server_output) = split_client_after_read_error();
+
+    let mut tls = Vec::new();
+    send.close(&mut tls);
+
+    server_input
+        .read(&mut Cursor::new(&mut tls))
+        .unwrap();
+    assert_eq!(
+        server
+            .process_new_packets(&mut server_input, &mut server_output)
+            .handle_all(&mut Vec::new())
+            .err(),
+        Some(Error::AlertReceived(AlertDescription::DecodeError))
+    );
+}
+
+#[test]
+fn read_error_alert_is_flushed_by_empty_write() {
+    let (mut send, mut server, mut server_input, mut server_output) =
+        split_client_after_read_error();
+
+    let mut tls = Vec::new();
+    send.write(OutboundPlain::new_empty(), &mut tls);
+    assert!(!tls.is_empty());
+
+    server_input
+        .read(&mut Cursor::new(&mut tls))
+        .unwrap();
+    assert_eq!(
+        server
+            .process_new_packets(&mut server_input, &mut server_output)
+            .handle_all(&mut Vec::new())
+            .err(),
+        Some(Error::AlertReceived(AlertDescription::DecodeError))
+    );
+}
+
+#[test]
+fn read_error_alert_precedes_written_data() {
+    let (mut send, mut server, mut server_input, mut server_output) =
+        split_client_after_read_error();
+
+    let mut tls = Vec::new();
+    send.write(b"after the alert".as_slice().into(), &mut tls);
+
+    server_input
+        .read(&mut Cursor::new(&mut tls))
+        .unwrap();
+    let mut plaintext = Vec::new();
+    assert_eq!(
+        server
+            .process_new_packets(&mut server_input, &mut server_output)
+            .handle_all(&mut plaintext)
+            .err(),
+        Some(Error::AlertReceived(AlertDescription::DecodeError))
+    );
+    // the alert came first, so the server accepted no plaintext
+    assert!(plaintext.is_empty());
+}
+
+#[test]
+fn read_error_alert_precedes_refresh_traffic_keys() {
+    let (mut send, mut server, mut server_input, mut server_output) =
+        split_client_after_read_error();
+
+    let mut tls = Vec::new();
+    send.refresh_traffic_keys(&mut tls)
+        .unwrap();
+
+    server_input
+        .read(&mut Cursor::new(&mut tls))
+        .unwrap();
+    assert_eq!(
+        server
+            .process_new_packets(&mut server_input, &mut server_output)
+            .handle_all(&mut Vec::new())
+            .err(),
+        Some(Error::AlertReceived(AlertDescription::DecodeError))
+    );
+}
+
+/// Handshake a pair, then feed the client's receive half invalid TLS data.
+///
+/// The resulting alert is left pending on the client's send half and the returned
+/// server is used to observe its delivery.
+fn split_client_after_read_error() -> (SendTraffic, ServerConnection, VecInput, Vec<u8>) {
     let mut client_output = Vec::new();
     let mut server_output = Vec::new();
     let (mut client, mut server) = make_pair(
@@ -377,28 +465,14 @@ fn read_invalid_data_and_send_alert() {
 
     let SplitConnection { send, receive, .. } = client.split().unwrap();
 
-    let err = receive
-        .read(&mut SliceInput::new(&mut [0u8; 5]))
-        .err()
-        .unwrap();
     assert_eq!(
-        err,
-        Error::InvalidMessage(InvalidMessage::InvalidContentType)
-    );
-
-    client_output.clear();
-    send.close(&mut client_output);
-
-    server_input
-        .read(&mut Cursor::new(&mut client_output))
-        .unwrap();
-    assert_eq!(
-        server
-            .process_new_packets(&mut server_input, &mut server_output)
-            .handle_all(&mut Vec::new())
+        receive
+            .read(&mut SliceInput::new(&mut [0u8; 5]))
             .err(),
-        Some(Error::AlertReceived(AlertDescription::DecodeError))
+        Some(Error::InvalidMessage(InvalidMessage::InvalidContentType))
     );
+
+    (send, server, server_input, server_output)
 }
 
 #[track_caller]
